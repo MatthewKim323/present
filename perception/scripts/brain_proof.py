@@ -293,18 +293,18 @@ h1{margin:0;font-size:30px;letter-spacing:-.02em;font-weight:650}h1 span{color:v
 .panel h2{margin:0 0 10px;font-size:13px;color:var(--mute);text-transform:uppercase;letter-spacing:.09em;font-weight:600}
 .graph{width:100%;height:auto;display:block}
 .edge{stroke:#394155;stroke-width:1.2}.edge.new{stroke:var(--up);stroke-width:2;opacity:.9}
-.elabel{fill:#5b6376;font:10.5px ui-monospace,Menlo,monospace;text-anchor:middle}.elabel.new{fill:#8fe9b8}
-.nlabel{fill:#aab2c2;font-size:13px}.nlabel.new{fill:#fff;font-weight:600}.nlabel.updated{fill:#dfe4ee}.nlabel.same{fill:#6d7588}
+.elabel{fill:#5b6376;font:10.5px ui-monospace,Menlo,monospace;text-anchor:middle;paint-order:stroke;stroke:var(--panel);stroke-width:4px}.elabel.new{fill:#8fe9b8}
+.nlabel{fill:#aab2c2;font-size:13.5px;paint-order:stroke;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}.nlabel.new{fill:#fff;font-weight:600}.nlabel.updated{fill:#dfe4ee}.nlabel.same{fill:#6d7588}
 .badge{fill:var(--up);font-size:10px;font-weight:700;letter-spacing:.08em}
 .legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:6px;color:var(--mute);font-size:12px}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
 .side{display:flex;flex-direction:column;gap:18px;min-width:0}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 td{padding:5px 0;border-top:1px solid var(--line);vertical-align:top}
-td.kind{width:130px;color:var(--mute);text-transform:uppercase;font-size:11px;letter-spacing:.08em;padding-top:8px}
-.pg{display:flex;justify-content:space-between;gap:10px;padding:1px 0}
-.pg code{color:var(--dim);font:12px ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pill{font-size:10.5px;font-weight:700;letter-spacing:.07em;border-radius:999px;padding:1px 8px;margin-right:8px}
+table{table-layout:fixed}td{padding:8px 0}td.kind{width:150px;text-transform:uppercase;font-size:11px;letter-spacing:.08em;padding-top:11px}
+.pg{padding:2px 0 4px;min-width:0}.pg .tt{display:flex;align-items:center;min-width:0}.pg .tt b{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pg code{display:block;color:var(--dim);font:12px ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.pill{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.07em;border-radius:999px;padding:1px 8px;margin-right:8px}
 .pill.new{color:#0b0d12;background:var(--up)}.pill.updated{color:var(--accent);border:1px solid rgba(255,171,94,.5)}
 .tl{list-style:none;margin:0;padding:0}.tl li{padding:7px 0;border-top:1px solid var(--line)}
 .tl .s{font-size:14px}.tl .t{color:var(--dim);font:11.5px ui-monospace,Menlo,monospace;margin-top:2px}
@@ -323,6 +323,22 @@ def _fmt_ts(s: str | None) -> str:
         return s
 
 
+def _tl_meta(e: dict[str, Any]) -> str:
+    when, detail = _fmt_ts(e.get("created_at")), (e.get("detail") or "").strip()
+    if detail and when and detail.startswith(when[:5]):
+        detail = detail[5:].lstrip(" ,")
+    return " · ".join(x for x in (f"written {when}" if when else "", detail) if x)
+
+
+def _local(iso: str | None) -> str:
+    if not iso:
+        return ""
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone().strftime("%b %d %H:%M:%S")
+    except ValueError:
+        return iso
+
+
 def render_report(before: dict[str, Any], after: dict[str, Any], focus: str = FOCUS_REL, max_rows: int = 8) -> str:
     d = diff(before, after)
     kpis = []
@@ -336,7 +352,7 @@ def render_report(before: dict[str, Any], after: dict[str, Any], focus: str = FO
     rows = []
     for kind in sorted(d["groups"], key=lambda k: KIND_ORDER.index(k) if k in KIND_ORDER else 99):
         items = sorted(d["groups"][kind], key=lambda p: (p["status"] != "new", p["slug"]))
-        cells = "".join(f'<div class="pg"><span><span class="pill {p["status"]}">{p["status"].upper()}</span>{html.escape(_short(p.get("title") or "", 44))}</span>'
+        cells = "".join(f'<div class="pg"><div class="tt"><span class="pill {p["status"]}">{p["status"].upper()}</span><b>{html.escape(p.get("title") or "")}</b></div>'
                         f'<code>{html.escape(p["slug"])}</code></div>' for p in items[:max_rows])
         if len(items) > max_rows:
             cells += f'<div class="more">+{len(items) - max_rows} more</div>'
@@ -344,8 +360,7 @@ def render_report(before: dict[str, Any], after: dict[str, Any], focus: str = FO
     table = f"<table>{''.join(rows)}</table>" if rows else '<div class="empty">no new or updated pages</div>'
     fl = d["new_timeline"].get(focus, [])
     tl = "".join(f'<li><div class="s">{html.escape(e.get("summary") or "")}</div>'
-                 f'<div class="t">{html.escape(_fmt_ts(e.get("created_at")))}{" · " + html.escape(e.get("detail") or "") if e.get("detail") else ""}</div></li>'
-                 for e in fl[-max_rows:])
+                 f'<div class="t">{html.escape(_tl_meta(e))}</div></li>' for e in fl[-max_rows:])
     if len(fl) > max_rows:
         tl = f'<li class="more">{len(fl) - max_rows} earlier lines not shown</li>' + tl
     tl_html = f'<ul class="tl">{tl}</ul>' if fl else '<div class="empty">no new timeline lines on this page</div>'
@@ -356,7 +371,7 @@ def render_report(before: dict[str, Any], after: dict[str, Any], focus: str = FO
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>GBrain Proof</title><style>{CSS}</style></head><body><div class="wrap">
 <header><div><h1>{title}</h1><div class="sub">Live read of the hosted gbrain.io workspace WORLD writes to: before vs after one in-person conversation.</div></div>
-<div class="meta">before · {html.escape(before.get("taken_at", ""))} ({html.escape(before.get("label", ""))})<br>after · {html.escape(after.get("taken_at", ""))} ({html.escape(after.get("label", ""))})<br>gbrain {html.escape(str((after.get("identity") or {}).get("version") or ""))}</div></header>
+<div class="meta">{html.escape(before.get("label", ""))} · {html.escape(_local(before.get("taken_at")))}<br>{html.escape(after.get("label", ""))} · {html.escape(_local(after.get("taken_at")))}<br>gbrain {html.escape(str((after.get("identity") or {}).get("version") or ""))}</div></header>
 <div class="kpis">{''.join(kpis)}</div>
 <div class="main"><div class="panel"><h2>Knowledge graph</h2>{graph_svg(after, d)}<div class="legend">{legend}</div></div>
 <div class="side"><div class="panel"><h2>New timeline on {html.escape(focus)}</h2>{tl_html}</div>
