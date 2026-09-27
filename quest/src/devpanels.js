@@ -551,9 +551,9 @@ function github(preview, checks) {
 
 // [ms, msg] entries merged into mock.js DEMO_SCRIPT. Deltas attach to the only card.
 export const DEV_SCRIPT = [
-  [2200, { kind: 'context_delta', person_id: null, delta_kind: 'preference', text: '+ prefers async demos over calls' }],
-  [3600, { kind: 'context_delta', person_id: null, delta_kind: 'fact', text: '+ team of 4, ships from GitHub' }],
-  [7200, { kind: 'context_delta', person_id: null, delta_kind: 'open_loop_you_owe', text: '+ send him the preview link' }],
+  [2200, { kind: 'context_delta', person_id: 'matthew', delta_kind: 'preference', text: '+ wants payouts explained up front' }],
+  [3600, { kind: 'context_delta', person_id: 'matthew', delta_kind: 'fact', text: '+ found the landing page confusing' }],
+  [7200, { kind: 'context_delta', person_id: 'matthew', delta_kind: 'open_loop_you_owe', text: '+ send him the preview link' }],
   ...STEPS.map((_, i) => [9000 + i * 900, session(i, 'running')]),
   [13500, github(false, 'pending')],
   [17200, session(8, 'pr_open', { step: 'PR #12 opened · building preview', pr: 12 })],

@@ -7,22 +7,22 @@ const TRACKS = Array.from({ length: 24 }, (_, i) => [i * 1000,
 
 export const DEMO_SCRIPT = [
   ...TRACKS,
-  [800, { kind: 'person_card', anchor_track_id: 3, person_id: 'alex', name: 'ALEX', subtitle: 'founder · Acme',
-    last: 'Syla onboarding', owes_you: 'feedback', you_owe: 'demo' }],
-  [4000, { kind: 'memory_event', text: 'CUSTOMER FEEDBACK REMEMBERED', detail: 'Canvas onboarding' }],
-  [5200, { kind: 'memory_event', text: 'COMMITMENT REMEMBERED', detail: 'send onboarding demo to Alex' }],
-  [6000, { kind: 'agent_activity', anchor_track_id: 3, hook: 'customer_feedback.detected', workers: [
+  [800, { kind: 'person_card', anchor_track_id: 3, person_id: 'matthew', name: 'MATTHEW', subtitle: 'lifelong friend · builder at Kali Labs',
+    last: 'friends since 2019 · co-building at YC', owes_you: 'feedback on Opal', you_owe: 'Discord invite' }],
+  [4000, { kind: 'memory_event', text: 'FEATURE REQUEST REMEMBERED', detail: 'Opal landing · How it works' }],
+  [5200, { kind: 'memory_event', text: 'COMMITMENT REMEMBERED', detail: 'send Matthew the Discord invite' }],
+  [6000, { kind: 'agent_activity', anchor_track_id: 3, hook: 'feature_request.detected', workers: [
     { name: 'Context', state: 'running', note: 'searching GBrain' },
-    { name: 'Product', state: 'running', note: 'finding similar Canvas complaints' },
-    { name: 'Follow-up', state: 'running', note: 'locating onboarding demo' } ] }],
-  [8500, { kind: 'agent_activity', anchor_track_id: 3, hook: 'customer_feedback.detected', workers: [
-    { name: 'Context', state: 'done', note: 'Alex · Acme · Syla pilot' },
-    { name: 'Product', state: 'running', note: '4 similar, likely OAuth step' },
-    { name: 'Follow-up', state: 'running', note: 'drafting reply' } ] }],
-  [11000, { kind: 'agent_activity', anchor_track_id: 3, hook: 'customer_feedback.detected', workers: [
-    { name: 'Context', state: 'done', note: 'Alex · Acme · Syla pilot' },
-    { name: 'Product', state: 'done', note: 'issue drafted: OAuth onboarding' },
-    { name: 'Follow-up', state: 'done', note: 'reply ready, awaiting approval' } ] }],
+    { name: 'Product', state: 'running', note: 'speccing How it works section' },
+    { name: 'Builder', state: 'running', note: 'queued: How it works section' } ] }],
+  [8500, { kind: 'agent_activity', anchor_track_id: 3, hook: 'feature_request.detected', workers: [
+    { name: 'Context', state: 'done', note: 'Matthew · lifelong friend · Opal user' },
+    { name: 'Product', state: 'done', note: '3 steps under hero, 2 checks' },
+    { name: 'Builder', state: 'running', note: 'coding: How it works section' } ] }],
+  [11000, { kind: 'agent_activity', anchor_track_id: 3, hook: 'feature_request.detected', workers: [
+    { name: 'Context', state: 'done', note: 'Matthew · lifelong friend · Opal user' },
+    { name: 'Product', state: 'done', note: '3 steps under hero, 2 checks' },
+    { name: 'Builder', state: 'done', note: 'PR #5 opened on qtzx06/opal' } ] }],
   ...DEV_SCRIPT, // dev cockpit: context_delta, dev_session, dev_github
 ].sort((a, b) => a[0] - b[0]);
 

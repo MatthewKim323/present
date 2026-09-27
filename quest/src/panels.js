@@ -63,7 +63,7 @@ export function drawPersonCard(m) {
   return c;
 }
 
-// 2. Memory event toast: "✓ CUSTOMER FEEDBACK REMEMBERED · Canvas onboarding"
+// 2. Memory event toast: "✓ FEATURE REQUEST REMEMBERED · Opal landing"
 export function drawMemoryToast(m) {
   const probe = panel(1, 1).ctx;
   probe.font = `600 11px ${FONT}`;
