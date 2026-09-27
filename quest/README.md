@@ -51,6 +51,7 @@ src/desktop.js        desktop renderer over the webcam
 src/xr.js             immersive-ar renderer, pinch -> gesture
 src/mock.js           scripted demo HUD sequence (?mock=1)
 src/perf.js           ?perf / ?lite / ?diag, OFFLINE chip, frame stats, redraw rate gates
+src/layout.js         ONE placement plan for every HUD layer (zones around the person) + ?hud= density
 scripts/mock-world.mjs  stand-in world service for solo dev
 scripts/perf-bench.mjs  headless perf + leak + fuzz bench (see "Headset survival")
 ```
@@ -83,11 +84,35 @@ with a lock-on + letter-decode), top enrolled candidates (left of the face, fade
 lock) and a 16-bar embedding barcode on each face. Learning (self-intro "I'm Matthew"
 or a `label`): progress ring with one tick per sample + a filmstrip of `face_capture`
 crops (shown, never stored), then a `FACE LEARNED · MATTHEW` toast (swallows the
-service's duplicate `PERSON ENROLLED`). `relationship_vector` = radar above the person
-card (desktop: under the card column when there's no headroom). XR: one unit plane per
+service's duplicate `PERSON ENROLLED`). `relationship_vector` = radar stacked under the person
+card (card first, radar second). XR: one unit plane per
 face at `?dist=`, sized from the bbox and `?hfov=`, head-facing, under the cards.
 `?mock=1` scripts it first (unknown -> intro -> learning -> recognized -> radar grows)
 and starts the rest of the demo 6.5s later.
+
+## HUD layout + density (`src/layout.js`)
+
+Every layer reads its placement from `src/layout.js` (the plan is drawn at the top of that file),
+so the HUD reads as one interface around the person:
+
+```
+ GBRAIN feed  |  3D swarm graph   [FACE] person card   |  QM SWARM lanes
+ (far left)   |  (left of face)   reticle + deltas     |  Memorable stack
+              |                   chip    radar        |  (far right rail)
+              |        GitHub PR panel (lower center)  |
+                   toasts: top center, one line at a time
+```
+
+- XR: meters in the person frame (origin = face center at `?dist=`, x right, y up), computed once per
+  frame by `xrFrame()` into `hud.lx`. Desktop: css px, `deskZones()` into `hud.ld`, one scale `k` that
+  shrinks the side panels until the rails fit the window.
+- De-dupe: the learned / recalled procedure is ONE card (memorypanel.js). swarmviz keeps the MEMORABLE
+  node glow + beams and a one-line `learned · <title>` label. `toastFilter()` drops toasts a panel already
+  animates (PROCEDURE LEARNED / RECALLED while Memorable is live), exact repeats within 8 s, and
+  FACE LEARNED after the first time.
+- `?hud=minimal|demo|full` (default `demo`, the stage setting). minimal = person card + reticle + toasts.
+  demo = everything at restrained sizes (5 GBrain lines, graph at 0.72). full = everything expanded.
+- Moving a layer: change its zone constant in `XR` / `DESK`, not the module.
 
 ## Run it (desktop, no headset)
 

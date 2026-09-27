@@ -6,6 +6,7 @@ import { DesktopSwarm } from './swarmviz.js';
 import { DesktopBrain } from './brainpanel.js';
 import { DesktopMemory } from './memorypanel.js';
 import { ANIM_HZ, due, safe, frameBegin, frameEnd } from './perf.js';
+import { deskZones, DESK, show } from './layout.js';
 
 export class DesktopHud {
   constructor({ canvas, video, hud, onPinch }) {
@@ -94,50 +95,61 @@ export class DesktopHud {
       this.hits.push({ track: id, x, y, w, h });
     }
 
-    let freeY = 80;
+    // layout.js zones: everything is placed relative to the person's face (one plan for every layer)
+    const z = (hud.ld = deskZones(innerWidth, innerHeight, this._face(vr), !!hud.devGithub && show('github')));
+    const k = z.k;
+
+    let freeY = z.right.y, first = true;
     for (const [id, msg] of hud.cards) {
       const c = this._raster('card:' + id, msg, drawPersonCard, deltasAnimating(msg));
-      const w = c.width / 2, h = c.height / 2;
-      const b = hud.bboxFor(id);
+      const w = (c.width / 2) * k, h = (c.height / 2) * k;
       let x, y;
-      if (b) {
-        x = vr.x + (b[0] + b[2]) * vr.w + 12;
-        y = vr.y + b[1] * vr.h;
-        if (x + w > innerWidth - 8) x = vr.x + b[0] * vr.w - w - 12;
-      } else {
-        x = innerWidth - w - 24; y = freeY; freeY += h + 10;
-      }
+      if (first) { x = z.card.x; y = z.card.y; first = false; } // right of the face
+      else { x = z.card.x; y = freeY; }
       ctx.drawImage(c, x, y, w, h);
-      placed.set(id, { x, y, w, h });
+      placed.set(id, { x, y, w, h, k });
       this.hits.push({ track: id, x, y, w, h });
+      freeY = y + h + DESK.gap;
     }
 
     for (const [id, msg] of hud.activity) {
       // Re-raster while any worker is running so the dots pulse.
       const c = this._raster('act:' + id, msg, drawAgentActivity, anyRunning(msg));
-      const w = c.width / 2, h = c.height / 2;
+      const w = (c.width / 2) * k, h = (c.height / 2) * k;
       const p = placed.get(id);
       let x, y;
       if (p) { x = p.x; y = p.y + p.h + 8; }
-      else { x = innerWidth - w - 24; y = freeY; freeY += h + 10; }
+      else { x = z.card.x; y = freeY; freeY += h + 10; }
       ctx.drawImage(c, x, y, w, h);
       this.hits.push({ track: id, x, y, w, h });
     }
 
-    safe('desktop swarm', () => this.swarm.draw(ctx, vr));
+    if (show('swarm3d')) safe('desktop swarm', () => this.swarm.draw(ctx, vr));
     safe('desktop dev', () => this.dev.draw(ctx, placed, vr));
-    safe('desktop brain', () => this.brain.draw(ctx, placed, vr));
-    safe('desktop memory', () => this.mem.draw(ctx));
+    if (show('brain')) safe('desktop brain', () => this.brain.draw(ctx, placed, vr));
+    if (show('memorable')) safe('desktop memory', () => this.mem.draw(ctx));
     safe('desktop vision', () => this.vfx.draw(ctx, placed, vr, this.hits));
 
-    let ty = innerHeight - 56;
-    for (const t of hud.liveToasts().reverse()) {
+    // toasts: top center, one line at a time, clear of the control panel
+    for (const t of hud.liveToasts()) {
       const c = this._raster('toast:' + t.t, t, drawMemoryToast);
       const w = c.width / 2, h = c.height / 2;
+      const x = Math.max(z.toast.minX, Math.min(innerWidth - DESK.pad - w, z.toast.cx - w / 2));
       ctx.globalAlpha = t.age < 0.08 ? t.age / 0.08 : t.age > 0.85 ? (1 - t.age) / 0.15 : 1;
-      ctx.drawImage(c, (innerWidth - w) / 2, ty, w, h);
+      ctx.drawImage(c, x, z.toast.y + 6 * (1 - Math.min(1, t.age / 0.08)), w, h);
       ctx.globalAlpha = 1;
-      ty -= h + 8;
     }
+  }
+
+  // Face rect on screen: the recognized face (visionfx) if any, else the first card's track, else any track.
+  _face(vr) {
+    const hud = this.hud;
+    let b = null;
+    const faces = hud.vfx?.faces;
+    if (faces) for (const f of faces.values()) if (f.e && performance.now() - f.t < 1500) { b = f.e.bbox; break; }
+    if (!b) for (const id of hud.cards.keys()) if ((b = hud.bboxFor(id))) break;
+    if (!b) for (const id of hud.tracks.keys()) if ((b = hud.bboxFor(id))) break;
+    if (!b) return null;
+    return { x: vr.x + b[0] * vr.w, y: vr.y + b[1] * vr.h, w: b[2] * vr.w, h: b[3] * vr.h };
   }
 }

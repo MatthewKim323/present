@@ -11,6 +11,7 @@ import { XrSwarm } from './swarmviz.js';
 import { XrBrain } from './brainpanel.js';
 import { XrMemory } from './memorypanel.js';
 import { ANIM_HZ, due, safe, frameBegin, frameEnd, perfLine, drawPerf, drawOffline, offlineText } from './perf.js';
+import { XR, xrFrame, xrAt, show } from './layout.js';
 
 const M_PER_PX = 0.0012; // panel css px -> meters (300px card ~ 0.36 m)
 
@@ -134,6 +135,8 @@ export class XrHud {
     const seen = new Set();
     const hud = this.hud;
     let freeIdx = 0;
+    // layout.js person frame (face center at ?dist=, right, up): every layer places itself relative to it
+    safe('xr layout', () => xrFrame(hud, this, head, headQ));
 
     // 1. person cards
     for (const [id, msg] of hud.cards) {
@@ -167,13 +170,15 @@ export class XrHud {
       m.mesh.userData.track = id;
     }
 
-    // 2. memory toasts: head-locked, low center, stacked
-    let y = -0.28;
+    // 2. memory toasts: top center over the person's head, one line at a time (layout.js)
+    let y = XR.toast[1];
     for (const tst of hud.liveToasts().reverse()) {
       const k = 'toast:' + tst.t;
       seen.add(k);
       const m = this._mesh(k, tst, drawMemoryToast);
-      (m.headLocked ||= new THREE.Vector3()).set(0, y, -1.2);
+      const L = hud.lx;
+      if (L && L.has) { m.headLocked = null; m.target = xrAt(L, 0, L.halfH + XR.toastAbove + m.mesh.geometry.parameters.height / 2, m.target || new THREE.Vector3()); }
+      else (m.headLocked ||= new THREE.Vector3()).set(XR.toast[0], y, XR.toast[2]);
       m.mesh.material.opacity = tst.age < 0.08 ? tst.age / 0.08 : tst.age > 0.85 ? (1 - tst.age) / 0.15 : 1;
       y += m.mesh.geometry.parameters.height + 0.015;
     }
@@ -183,7 +188,7 @@ export class XrHud {
     if (due(this, 2, now, '_statusT')) this._statusLine = this.statusLine();
     seen.add('status');
     const sm = this._mesh('status', this._statusLine, drawStatus);
-    (sm.headLocked ||= new THREE.Vector3()).set(0, -0.42, -1.2);
+    (sm.headLocked ||= new THREE.Vector3()).set(...XR.status);
     sm.mesh.material.opacity = 0.7;
 
     // OFFLINE chip (world service unreachable), just above the status strip. Subtle, not an alarm.
@@ -191,7 +196,7 @@ export class XrHud {
     if (off) {
       seen.add('offline');
       const om = this._mesh('offline', off, drawOffline);
-      (om.headLocked ||= new THREE.Vector3()).set(0, -0.385, -1.2);
+      (om.headLocked ||= new THREE.Vector3()).set(XR.status[0], XR.status[1] + 0.035, XR.status[2]);
       om.mesh.material.opacity = 0.85;
     }
 
@@ -200,7 +205,7 @@ export class XrHud {
       if (due(this, 2, now, '_perfT')) this._perfLine = perfLine();
       seen.add('perf');
       const pm = this._mesh('perf', this._perfLine || '', drawPerf);
-      (pm.headLocked ||= new THREE.Vector3()).set(-0.2, 0.26, -1.2);
+      (pm.headLocked ||= new THREE.Vector3()).set(...XR.perf);
       pm.mesh.material.opacity = 0.8;
     }
 
@@ -222,10 +227,10 @@ export class XrHud {
       }
     }
     safe('xr dev', () => this.dev.frame(head, headQ, this.meshes, this.config.cardDistance));
-    safe('xr memory', () => this.mem.frame(head, headQ, this.dev));
+    if (show('memorable')) safe('xr memory', () => this.mem.frame(head, headQ, this.dev)); else this.mem._drop();
     safe('xr vision', () => this.vfx.frame(this, head, headQ));
-    safe('xr swarm', () => this.swarm.frame(head, headQ));
-    safe('xr brain', () => this.brain.frame(head, headQ, this.meshes, this.dev));
+    if (show('swarm3d')) safe('xr swarm', () => this.swarm.frame(head, headQ));
+    if (show('brain')) safe('xr brain', () => this.brain.frame(head, headQ, this.meshes, this.dev));
   }
 
   // Normalized camera-frame coords -> world point at `dist` along the ray.

@@ -10,6 +10,7 @@
 //   mock.js     VISION_SCRIPT + VISION_LEAD (scripted: unknown -> intro -> learning -> recognized -> radar grows)
 import * as THREE from 'three';
 import { LITE, ANIM_HZ, due } from './perf.js';
+import { show, XR } from './layout.js';
 
 const FONT = 'ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif';
 const MONO = 'ui-monospace, Menlo, monospace';
@@ -420,20 +421,21 @@ export class DesktopVision {
       const r = { x: vr.x + bx * vr.w, y: vr.y + by * vr.h, w: bw * vr.w, h: bh * vr.h };
       drawFace(ctx, r, f, hud.vfx.film.get(k), t, hud.vfx.learnedAt.get(k) || 0);
     }
-    // radar above the person card, else under the card column (card, deltas, activity), never over the face
+    // radar: stacked under the person column (card + deltas + activity), right of the face (layout.js)
+    hud._radarRect = null;
+    if (!show('radar')) return;
     for (const [id, rect] of placed) {
       const r = radarFor(hud, hud.cards.get(id));
       if (!r) continue;
       let c = this.radarCache.get(r.person_id);
-      if (!c || c.r !== r || radarAnimating(r, t)) { c = { r, canvas: drawRadar(r, t) }; this.radarCache.set(r.person_id, c); }
-      const w = RADAR_W, h = RADAR_H;
-      let x = rect.x, y = rect.y - h - 10;
-      if (y < 8) {
-        const col = hits.filter((hh) => hh.track === id && hh.x >= rect.x - 1 && hh.y >= rect.y - 1);
-        y = Math.max(...col.map((hh) => hh.y + hh.h), rect.y + rect.h) + 10;
-        if (y + h > innerHeight - 8) { x = rect.x + rect.w + 12; y = rect.y; } // no room below: beside the card
-      }
+      if (!c || c.r !== r || (radarAnimating(r, t) && due(c, ANIM_HZ, t))) { c = { r, canvas: drawRadar(r, t), _drawT: t }; this.radarCache.set(r.person_id, c); }
+      const k = rect.k || 1;
+      const w = RADAR_W * k, h = RADAR_H * k;
+      const col = hits.filter((hh) => hh.track === id && hh.x >= rect.x - 1 && hh.y >= rect.y - 1);
+      let x = rect.x, y = Math.max(...col.map((hh) => hh.y + hh.h), rect.y + rect.h) + 10;
+      if (y + h > innerHeight - 8) y = innerHeight - 8 - h; // short screens: pin to the bottom, still in the column
       if (x + w > innerWidth - 8) x = innerWidth - w - 8;
+      hud._radarRect = { x, y, w, h };
       ctx.drawImage(c.canvas, x, y, w, h);
       break;
     }
@@ -523,8 +525,8 @@ export class XrVision {
       if (!m.mesh.userData.placed) { m.mesh.position.copy(p); m.mesh.userData.placed = true; } else m.mesh.position.lerp(p, 0.35);
       m.mesh.quaternion.copy(headQ);
     }
-    // radar above the first person card
-    for (const [id, msg] of hud.cards) {
+    // radar stacked under the first person card (layout.js: right of the face, card first)
+    for (const [id, msg] of (show('radar') ? hud.cards : [])) {
       const r = radarFor(hud, msg);
       const card = xr.meshes.get('card:' + id);
       if (!r || !card) continue;
@@ -541,7 +543,10 @@ export class XrVision {
         m.r = r;
       }
       const ch = card.mesh.geometry.parameters.height;
-      const target = _v.copy(card.mesh.position).add(_right.set(0, ch / 2 + hm / 2 + 0.02, 0));
+      const target = _v.copy(card.mesh.position).add(_right.set(0, -(ch / 2 + hm / 2 + XR.radarGap), 0));
+      // left edges aligned with the card
+      const cw = card.mesh.geometry.parameters.width;
+      if (hud.lx) target.addScaledVector(hud.lx.r, -(cw - wm) / 2);
       if (!m.mesh.userData.placed) { m.mesh.position.copy(target); m.mesh.userData.placed = true; } else m.mesh.position.lerp(target, 0.15);
       m.mesh.lookAt(head);
       break;

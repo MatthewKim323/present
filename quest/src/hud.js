@@ -7,6 +7,7 @@ import { observeSwarm } from './swarmviz.js';
 import { applyBrain } from './brainpanel.js';
 import { applyMemory } from './memorypanel.js';
 import { warnOnce } from './perf.js';
+import { toastFilter, TOAST_MAX } from './layout.js';
 
 const TOAST_MS = 4200;
 const TRACK_STALE_MS = 4000;
@@ -59,8 +60,9 @@ export class HudState {
         for (const [k, c] of this.cards) this.cards.set(k, { ...c, watching: this._watching(c.person_id) });
         break;
       case 'memory_event':
+        if (!toastFilter(this, msg)) return; // duplicates a panel's own animation (layout.js)
         this.toasts.push({ text: String(msg.text ?? ''), detail: msg.detail == null ? '' : String(msg.detail), t: now() });
-        this.toasts = this.toasts.slice(-3);
+        this.toasts = this.toasts.slice(-TOAST_MAX); // one line at a time: the newest replaces the last
         break;
       case 'agent_activity':
         if (!Array.isArray(msg.workers)) msg = { ...msg, workers: [] }; // renderers iterate workers every frame
@@ -75,7 +77,7 @@ export class HudState {
         for (const t of Array.isArray(msg.tracks) ? msg.tracks : []) if (t) this._track(t.track_id, t.bbox, t.label);
         return;
       case 'clear':
-        this.cards.clear(); this.activity.clear(); this.toasts = [];
+        this.cards.clear(); this.activity.clear(); this.toasts = []; this._toastSeen = null;
         break;
       default:
         return;
