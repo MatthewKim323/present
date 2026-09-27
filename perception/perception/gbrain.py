@@ -275,6 +275,31 @@ def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def _parse_ts(v: Any) -> float | None:
+    if not v:
+        return None
+    s = str(v).strip()
+    try:
+        if len(s) == 10:
+            return datetime.strptime(s, "%Y-%m-%d").timestamp()
+        if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$", s):
+            return datetime.strptime(s, "%Y-%m-%d %H:%M").timestamp()
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _ago(sec: float) -> str:
+    sec = max(0.0, sec)
+    if sec < 90:
+        return "just now"
+    if sec < 3600:
+        return f"{int(sec // 60)}m ago"
+    if sec < 86400:
+        return f"{int(sec // 3600)}h ago"
+    return f"{int(sec // 86400)}d ago"
+
+
 def _hhmm(ts: float | None = None) -> str:
     return datetime.fromtimestamp(ts or time.time()).strftime("%H:%M")
 
@@ -402,6 +427,7 @@ class GBrainIOSink:
         self.wearer_id = wearer_id
         self.wearer_name = wearer_name
         self.situation = situation or Situation.from_env()
+        self._timelines: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         self.encounter_debounce_s = encounter_debounce_s
         self.person_ttl_s = person_ttl_s
         self.read_timeout_s = read_timeout_s
@@ -590,6 +616,11 @@ class GBrainIOSink:
             self._mark_down(e)
             return hit[1] if hit else None
         self._person[pid] = (time.time(), page)
+        try:
+            tl = await self._call("get_timeline", {"slug": f"people/{pid}", "limit": 30}, timeout=self.read_timeout_s)
+            self._timelines[pid] = (time.time(), tl if isinstance(tl, list) else [])
+        except Exception:  # noqa: BLE001
+            pass
         return page
 
     async def warm(self, person_ids: list[str]) -> None:
@@ -788,6 +819,34 @@ class GBrainIOSink:
         return title, [f"Device: {p.get('device')}", f"Symptom: {p.get('symptom')}", f"Repro: {p.get('repro')}" if p.get("repro") else ""], \
             {"device": p.get("device"), "symptom": p.get("symptom")}
 
+    def _seen_before(self, pid: str, st: RelState | None, page: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Previous encounter (not the current one): timeline timestamps first, relationship page second."""
+        cutoff = self._last_encounter.get(pid, time.time() + 1) - 5
+        best: tuple[float, str | None] | None = None
+        for e in (self._timelines.get(pid) or (0, []))[1]:
+            summ = str(e.get("summary") or "")
+            if not summ.lower().startswith("seen by"):
+                continue
+            ts = _parse_ts(e.get("created_at"))
+            if ts is None or ts >= cutoff:
+                continue
+            where = summ.split(" at ", 1)[1] if " at " in summ else None
+            if best is None or ts > best[0]:
+                best = (ts, where)
+        if best is None and st and st.prev_seen:
+            ts = _parse_ts(st.prev_seen)
+            if ts is not None:
+                best = (ts, st.prev_seen_where)
+        if best is None and page:
+            earlier = [x for x in parse_timeline(page.get("timeline") or "") if x["summary"].lower().startswith("seen by") and x["date"] < _today()]
+            if earlier:
+                d = max(earlier, key=lambda x: x["date"])
+                best = (_parse_ts(d["date"]) or 0.0, d["summary"].split(" at ", 1)[1] if " at " in d["summary"] else None)
+        if best is None:
+            return None
+        ts, where = best
+        return {"when": datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M"), "ago": _ago(time.time() - ts), "where": where}
+
     def known_facts(self, pid: str) -> list[str]:
         st = self.rel.get(pid)
         if st is None:
@@ -807,13 +866,7 @@ class GBrainIOSink:
         fm = (page or {}).get("frontmatter") or {}
         subtitle = _clean(fm.get("subtitle")) or " · ".join(x for x in (_clean(fm.get("role")), _clean(fm.get("company"))) if x) or None
         rel_line = (st and st.summary) or _clean(fm.get("relationship"))
-        seen = None
-        if st and st.prev_seen:
-            seen = {"when": st.prev_seen, "where": st.prev_seen_where}
-        elif page:
-            earlier = [x for x in parse_timeline(page.get("timeline") or "") if x["summary"].lower().startswith("seen by") and x["date"] < _today()]
-            if earlier:
-                seen = {"when": max(x["date"] for x in earlier), "where": None}
+        seen = self._seen_before(person_id, st, page)
         ctx = dict(base)
         ctx.update({
             "subtitle": subtitle or base.get("subtitle"),

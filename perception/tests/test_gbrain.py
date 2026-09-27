@@ -41,6 +41,7 @@ class FakeMCP:
         self.links: set[tuple[str, str, str]] = set()
         self.calls: list[tuple[str, dict]] = []
         self.fail = False
+        self.now = "2026-09-27T21:00:00.000Z"
 
     async def call(self, name, args):
         self.calls.append((name, args))
@@ -56,13 +57,15 @@ class FakeMCP:
             self.pages[args["slug"]] = args["content"]
             return {"status": "created_or_updated"}
         if name == "add_timeline_entry":
-            self.timeline.setdefault(args["slug"], []).append(args)
+            self.timeline.setdefault(args["slug"], []).append({**args, "created_at": self.now})
             return {"status": "ok"}
         if name == "add_link":
             if args["to"] not in self.pages or args["from"] not in self.pages:
                 raise NotFound(args["to"])
             self.links.add((args["from"], args["to"], args.get("link_type", "")))
             return {"status": "ok"}
+        if name == "get_timeline":
+            return list(reversed(self.timeline.get(args["slug"], [])))
         raise AssertionError(f"unexpected tool {name}")
 
 
@@ -182,7 +185,8 @@ async def test_second_encounter_card_is_richer_from_hydrated_page():
     await sink.emit(enc_event())
     ctx = await sink.person_context("matthew")
     await sink.flush()
-    assert ctx["seen_before"] == {"when": "2026-09-20 10:00", "where": "Demo day, SF"}
+    assert ctx["seen_before"]["when"] == "2026-09-20 10:00" and ctx["seen_before"]["where"] == "Demo day, SF"
+    assert ctx["seen_before"]["ago"].endswith("d ago")
     assert ctx["you_owe"] == "send demo" and ctx["relationship"] == "met at demo day"
     fm, body = parse_front(mcp.pages["relationships/stephen--matthew"])
     assert fm["encounters"] == 2 and "- runs a 4 person team" in body
@@ -330,3 +334,20 @@ async def test_live_skips_unknown_people():
     enc = Encounter("e2", None, "UNKNOWN PERSON 01", 1, 0.0, 0.0)
     enc.utterances = [Utterance(float(i), "x") for i in range(10)]
     assert not live.due(enc, 100.0)
+
+
+async def test_seen_before_uses_timeline_timestamps_and_skips_current_encounter():
+    import time as _t
+    from datetime import datetime, timezone
+
+    mcp = FakeMCP()
+    sink, _ = make_sink(mcp)
+    two_h = datetime.fromtimestamp(_t.time() - 7200, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    mcp.pages["people/matthew"] = '---\ntype: "person"\ntitle: "Matthew"\n---\n\n# Matthew\n'
+    mcp.timeline["people/matthew"] = [{"slug": "people/matthew", "date": "2026-09-27", "summary": "Seen by Stephen at Coffee, Palo Alto", "created_at": two_h}]
+    mcp.now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    await sink.emit(enc_event())
+    await sink.flush()
+    sink._person.clear()  # force re-read so the current encounter's own entry is in the timeline
+    ctx = await sink.person_context("matthew")
+    assert ctx["seen_before"]["ago"] == "2h ago" and ctx["seen_before"]["where"] == "Coffee, Palo Alto"
