@@ -39,7 +39,7 @@ from .vision import VisionPipeline
 from .intro import IntroEnroller
 from .visionfx import VisionFx
 from .director import add_director_routes
-from .watches import PinchAdopter, WatchBoard, WatchRequester
+from .watches import PinchAdopter, WatchBoard, WatchRequester, add_watch_routes
 
 log = logging.getLogger("world")
 
@@ -291,7 +291,8 @@ class WorldService:
         closed = self.conv.add_utterance(u, pid, name, tid)
         for enc in closed:
             asyncio.create_task(self._finish_encounter(enc))
-        await self.watch_req.on_utterance(u, (pid, name), tid)  # wearer's standing instructions (regex prefilter, then haiku)
+        if await self.watch_req.on_utterance(u, (pid, name), tid):  # wearer's standing instruction (regex prefilter, then haiku)
+            self.conv.drop_utterance(u)  # said to the AI, not to the person: keep it out of extraction
 
     async def _tick_loop(self) -> None:
         while True:
@@ -361,6 +362,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     add_procedure_routes(app, svc.procfeed)
     add_gbrain_routes(app, lambda: svc.gbrain)  # read-only GBrain for QM workers (WorldHooks bearer)
     add_director_routes(app, svc)  # /director stage console (director.py)
+    add_watch_routes(app, svc.watchboard)  # GET /watches (watches.py)
 
     @app.post("/procedures")
     async def post_procedure(body: dict[str, Any]):

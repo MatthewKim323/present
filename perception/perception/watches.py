@@ -323,3 +323,10 @@ class WatchBoard:
         await self.broadcast({"kind": "memory_event", "text": "WATCH FIRED", "detail": self._detail(w)})
         await self.send_list()
         return True
+
+
+def add_watch_routes(app: Any, board: WatchBoard) -> None:
+    @app.get("/watches")
+    async def list_watches():
+        """Debug: every watch this run (armed / fired / rejected) and pinch-assigned agents."""
+        return {"watches": list(board.watches.values()), "agents": board.agents}

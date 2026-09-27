@@ -196,6 +196,9 @@ def test_service_wiring(tmp_path):
                                          "name": "Matthew", "person_id": "matthew"})
         assert hud.receive_json() == {"kind": "memory_event", "text": "WATCH ARMED", "detail": "pricing · Matthew"}
         assert hud.receive_json()["kind"] == "armed_watches"
+        # the instruction was said to the AI: it never reaches conversation extraction (no self-firing commitment)
+        assert svc.conv.current is None or not svc.conv.current.utterances
+        assert c.get("/watches").json()["watches"][0]["topic"] == "pricing"
         c.post("/debug/utterance", json={"text": "next time I bring up pricing, remind me", "speaker": "other", "name": "Matthew"})
         assert len(svc.watchboard.watches) == 1
         # a pinch on a recognized track adopts the person; the refreshed card carries the agent badge
