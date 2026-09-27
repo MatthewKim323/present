@@ -44,10 +44,23 @@ def load_image(path: Path) -> np.ndarray | None:
     return cv2.resize(img, (int(w * s), int(h * s))) if s < 1 else img
 
 
+def detect_multiscale(engine: FaceEngine, img: np.ndarray) -> list[Face]:
+    # YuNet misses faces that fill most of a high-res frame (close-up selfies), and misses
+    # small faces in group shots at low res, so try low res first and fall back to high res
+    prev = engine.max_side
+    try:
+        for side in (640, 1600):
+            engine.max_side = side
+            faces = engine.detect(img)
+            if faces:
+                return faces
+        return []
+    finally:
+        engine.max_side = prev
+
+
 def enroll_from_dir(root: Path, engine: FaceEngine, store: PeopleStore) -> dict[str, dict]:
     summary: dict[str, dict] = {}
-    # photos: detect at full (downscaled-to-1600) res so small faces in group-ish shots still register
-    engine.max_side = 1600
     for person_dir in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")):
         name = person_dir.name
         embs, srcs, skipped = [], [], []
@@ -58,7 +71,7 @@ def enroll_from_dir(root: Path, engine: FaceEngine, store: PeopleStore) -> dict[
             if img is None:
                 skipped.append((img_path.name, "unreadable"))
                 continue
-            face, why = pick_face(engine.detect(img))
+            face, why = pick_face(detect_multiscale(engine, img))
             if face is None:
                 skipped.append((img_path.name, why))
                 continue
