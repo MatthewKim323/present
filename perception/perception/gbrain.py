@@ -324,7 +324,7 @@ class RelState:
 
     def page(self, wearer_name: str, situation: Situation) -> str:
         front = {
-            "type": "relationship", "title": f"{wearer_name} and {self.name}", "person": self.person_id,
+            "type": "relationship", "title": f"{wearer_name} and {self.name}", "person": self.person_id, "created_by": "world",
             "summary": self.summary, "last_topic": self.last_topic, "sentiment": self.sentiment,
             "last_seen": self.last_seen, "last_seen_where": self.last_seen_where,
             "encounters": self.encounters or None,
@@ -413,6 +413,7 @@ class GBrainIOSink:
         self._known_pages: set[str] = set()
         self._linked: set[tuple[str, str]] = set()
         self._last_encounter: dict[str, float] = {}
+        self._hydrate_locks: dict[str, asyncio.Lock] = {}
         self._down_until = 0.0
         self._queue: asyncio.Queue | None = None
         self._worker: asyncio.Task | None = None
@@ -511,7 +512,7 @@ class GBrainIOSink:
         return f"relationships/{self.wearer_id}--{pid}"
 
     def _person_stub_page(self, pid: str, name: str) -> str:
-        return _page({"type": "person", "title": name},
+        return _page({"type": "person", "title": name, "created_by": "world"},
                      f"# {name}\n\nCreated by WORLD on first in-person encounter with {self.wearer_name}. "
                      f"Relationship: [[{self.rel_slug(pid)}]].\n")
 
@@ -595,8 +596,10 @@ class GBrainIOSink:
         await asyncio.gather(*(self._warm_one(pid) for pid in person_ids), return_exceptions=True)
 
     async def _warm_one(self, pid: str) -> None:
-        if pid not in self.rel or not self.rel[pid].hydrated:
-            await self.hydrate(pid)
+        lock = self._hydrate_locks.setdefault(pid, asyncio.Lock())
+        async with lock:  # the card read and the write worker may both hydrate; merge exactly once
+            if pid not in self.rel or not self.rel[pid].hydrated:
+                await self.hydrate(pid)
         await self._person_page(pid)
 
     # ---------- emit ----------
@@ -722,7 +725,7 @@ class GBrainIOSink:
         date = (event.get("ts") or "")[:10] or _today()
         slug = f"{SIGNAL_DIRS[t]}/{date}-{(slugify(title) or 'item')[:60]}"
         front.update({"type": SIGNAL_DIRS[t].rstrip("s") if t != "feature_request.detected" else "feature-request",
-                      "title": title, "date": date, "event_id": event.get("id"), "event_type": t,
+                      "title": title, "date": date, "created_by": "world", "event_id": event.get("id"), "event_type": t,
                       "confidence": event.get("confidence"), "situation": self.situation.slug,
                       "people": [x["id"] for x in others] or None, "project": slugify(project) if project else None})
         refs = [f"[[people/{x['id']}]]" for x in others] + ([f"[[projects/{slugify(project)}]]"] if project else []) + [f"[[{self.situation.slug}]]"]
@@ -751,7 +754,7 @@ class GBrainIOSink:
             await self._ensure_page(self.situation.slug, self.situation.page())
             await self._link(slug, self.situation.slug, "happened_at")
             if pslug:
-                await self._ensure_page(pslug, _page({"type": "project", "title": project}, f"# {project}\n\nCreated by WORLD from in-person signals.\n"))
+                await self._ensure_page(pslug, _page({"type": "project", "title": project, "created_by": "world"}, f"# {project}\n\nCreated by WORLD from in-person signals.\n"))
                 await self._link(slug, pslug, "about")
             for pid, name in pids:
                 await self._warm_one(pid)
@@ -777,12 +780,19 @@ class GBrainIOSink:
             return title, [f"Feedback: {p.get('feedback')}", f"Sentiment: {p.get('sentiment')}", f"Buying signal: {p['buying_signal']}" if p.get("buying_signal") else ""], \
                 {"product": p.get("product"), "feature": p.get("feature"), "sentiment": p.get("sentiment"), "buying_signal": p.get("buying_signal")}
         if t == "feature_request.detected":
-            title = p.get("request") or " ".join(x for x in (p.get("product"), p.get("feature"), "request") if x)
-            return title, [f"Product: {p.get('product')}", f"Feature: {p.get('feature')}", f"Requested by: {p.get('requested_by')}"], \
+            title = p.get("feature") or p.get("request") or "Feature request"
+            acc = [f"Acceptance: {a}" for a in (p.get("acceptance") or []) if a]
+            return title, [f"Request: {p.get('request')}", f"Product: {p.get('product')}", f"Requested by: {p.get('requested_by')}", *acc], \
                 {"product": p.get("product"), "feature": p.get("feature"), "requested_by": p.get("requested_by")}
         title = " ".join(x for x in (p.get("device"), p.get("symptom")) if x) or "Physical bug"
         return title, [f"Device: {p.get('device')}", f"Symptom: {p.get('symptom')}", f"Repro: {p.get('repro')}" if p.get("repro") else ""], \
             {"device": p.get("device"), "symptom": p.get("symptom")}
+
+    def known_facts(self, pid: str) -> list[str]:
+        st = self.rel.get(pid)
+        if st is None:
+            return []
+        return [*st.facts, *st.deltas, *(f"you owe: {x}" for x in st.you_owe), *(f"owes you: {x}" for x in st.owes_you)]
 
     # ---------- person card ----------
     async def person_context(self, person_id: str) -> dict[str, Any] | None:

@@ -26,6 +26,7 @@ from .conversation import ConversationManager, Encounter, Utterance
 from .events import normalize_event
 from .extract import Extractor
 from .faces import FaceEngine, LatencyStat, decode_jpeg
+from .live import RollingExtractor
 from .people import PeopleStore
 from .sinks import FanOut, HudSink, QMSink, StubGBrainSink
 from .vision import VisionPipeline
@@ -67,12 +68,15 @@ class WorldService:
         )
         self.hub = Hub()
         self.debug_clients: set[WebSocket] = set()
-        self.gbrain = StubGBrainSink(self.s.events_log_path, people_meta=self._people_meta)
+        self.gbrain = self._make_gbrain(StubGBrainSink(self.s.events_log_path, people_meta=self._people_meta))
         self.qm = QMSink(self.s.qm_url)
         self.hud = HudSink(self.hub.broadcast, gbrain=self.gbrain)
         self.fanout = FanOut([self.gbrain, self.qm, self.hud])
         self.conv = ConversationManager(self.s.conv_gap_s, self.s.leave_grace_s)
         self.extractor = extractor or Extractor(self.s.anthropic_model, self.s.wearer_id, self.s.wearer_name)
+        self.live = RollingExtractor(self.emit, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name,
+                                     known=getattr(self.gbrain, "known_facts", None), client=False)
+        self.live.client = self.extractor.client  # live passes only when extraction is enabled
         self.transcriber: Transcriber | None = transcriber
         self.vad = EnergyVAD(16000)
         self.source = "quest3s"
@@ -86,6 +90,17 @@ class WorldService:
         self.frames_done = 0
         self.events_out = 0
 
+    def _make_gbrain(self, stub: StubGBrainSink):
+        from .gbrain_auth import configured
+
+        mode = (self.s.gbrain_backend or "").lower()
+        if mode == "stub" or (mode != "io" and not configured()):
+            return stub
+        from .gbrain import make_gbrain_sink
+
+        log.info("GBrain: hosted gbrain.io (fallback: stub)")
+        return make_gbrain_sink(stub, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name, people_meta=self._people_meta)
+
     def _people_meta(self, pid: str) -> dict:
         p = self.store.people.get(pid)
         return {**p.meta, "name": p.name} if p else {}
@@ -98,7 +113,10 @@ class WorldService:
             asyncio.create_task(self._frame_worker()),
             asyncio.create_task(self._asr_worker()),
             asyncio.create_task(self._tick_loop()),
+            asyncio.create_task(self.live.loop(lambda: self.conv.current)),
         ]
+        if hasattr(self.gbrain, "warm"):
+            self._tasks.append(asyncio.create_task(self.gbrain.warm(sorted(self.store.people))))
         if self.transcriber is None:
             asyncio.create_task(self._load_asr())
 
@@ -250,6 +268,7 @@ class WorldService:
             "asr": type(self.transcriber).__name__ if self.transcriber else "loading",
             "llm": self.extractor.client is not None,
             "qm_url": self.s.qm_url or None,
+            "gbrain": self.gbrain.status() if hasattr(self.gbrain, "status") else {"backend": "stub"},
             "enrolled": sorted(self.store.people),
             "tracks": [self.vision.track_view(t) for t in self.vision.tracker.tracks.values()],
             "conversation_open": bool(self.conv.current),
@@ -263,6 +282,7 @@ class WorldService:
                 "frame_total": r(self.frame_lat.ms),
                 "asr_segment": r(self.asr_lat.ms),
                 "llm_extract": r(self.extractor.last_latency_ms),
+                "llm_live": r(self.live.last_latency_ms),
             },
         }
 

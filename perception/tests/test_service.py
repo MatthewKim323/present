@@ -16,6 +16,7 @@ def make_app(tmp_path):
     s.people_path = tmp_path / "people.json"
     s.events_log_path = tmp_path / "events.jsonl"
     s.qm_url = ""
+    s.gbrain_backend = "stub"
     x = Extractor(client=None)
     x.client = None
     svc = WorldService(s, load_models=False, transcriber=NullTranscriber(), extractor=x)

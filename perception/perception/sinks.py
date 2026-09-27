@@ -164,6 +164,13 @@ class HudSink:
         if t == "person.encountered":
             await self.broadcast(await self.person_card(event))
             return
+        if t == "relationship.updated":
+            # live compounding: each learned delta pops onto the person card
+            pid = event.get("payload", {}).get("person_id")
+            for d in event.get("payload", {}).get("deltas") or []:
+                if d.get("text"):
+                    await self.broadcast({"kind": "context_delta", "person_id": pid, "delta_kind": d.get("kind"), "text": f"+ {d['text']}"})
+            return
         text = MEMORY_TEXT.get(t)
         if text:
             await self.broadcast({"kind": "memory_event", "text": text, "detail": memory_detail(event)})
@@ -177,7 +184,7 @@ class HudSink:
                 ctx = await self.gbrain.person_context(pid) or {}
             except Exception:
                 log.exception("gbrain person_context failed")
-        return {
+        card = {
             "kind": "person_card",
             "anchor_track_id": p.get("track_id"),
             "person_id": pid,
@@ -187,6 +194,11 @@ class HudSink:
             "owes_you": ctx.get("owes_you"),
             "you_owe": ctx.get("you_owe"),
         }
+        # additive GBrain fields (older HUD clients ignore them)
+        for k in ("seen_before", "here", "relationship", "recent_deltas"):
+            if ctx.get(k):
+                card[k] = ctx[k]
+        return card
 
 
 class FanOut:

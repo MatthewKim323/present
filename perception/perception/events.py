@@ -14,6 +14,7 @@ EVENT_TYPES = {
     "commitment.detected",
     "customer_feedback.detected",
     "feature_request.detected",
+    "relationship.updated",
     "physical_bug.detected",
     "task.demonstrated",
     "world.task_requested",

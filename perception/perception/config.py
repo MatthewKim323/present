@@ -61,12 +61,13 @@ class Settings:
 
     # Extraction
     anthropic_model: str = field(default_factory=lambda: _env("WORLD_LLM_MODEL", "claude-sonnet-5"))
-    wearer_id: str = field(default_factory=lambda: _env("WORLD_WEARER_ID", "matthew"))
-    wearer_name: str = field(default_factory=lambda: _env("WORLD_WEARER_NAME", "Matthew"))
+    wearer_id: str = field(default_factory=lambda: _env("WORLD_WEARER_ID", "stephen"))
+    wearer_name: str = field(default_factory=lambda: _env("WORLD_WEARER_NAME", "Stephen"))
 
     # Sinks
     qm_url: str = field(default_factory=lambda: _env("QM_URL", ""))
-    gbrain_backend: str = field(default_factory=lambda: _env("GBRAIN_BACKEND", "stub"))
+    # gbrain: "io" (hosted gbrain.io) | "stub" | "" = auto (io when perception/.env.gbrain exists)
+    gbrain_backend: str = field(default_factory=lambda: _env("GBRAIN_MODE", _env("GBRAIN_BACKEND", "")))
 
 
 def get_settings() -> Settings:
