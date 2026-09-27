@@ -46,6 +46,7 @@ QM  --traces-->  Memorable  (native QM integration)
 | `physical_bug.detected` | `{ device, symptom, repro }` |
 | `task.demonstrated` / `world.task_requested` | `{ instruction, target: "whiteboard"\|"object"\|..., snapshot_ref? }` |
 | `object.state_changed` / `object.last_seen` | `{ object, state?, location? }` |
+| `relationship.updated` | `{ person_id, deltas: [{ kind, text }], summary, encounter_id, utterances_seen }` emitted LIVE during a conversation (every ~20s or 4 utterances, `perception/live.py`, small fast model). `kind`: `fact` \| `preference` \| `topic` \| `sentiment` \| `shared_context` \| `open_loop_you_owe` \| `open_loop_owes_you`; `text` is a terse HUD line ("prefers async demos"). Only new info, never transcript. GBrain writes it to `relationships/<wearer>-<person>` immediately |
 
 ## HUD messages (world service -> Quest, over /ws/hud and /ws/quest)
 
@@ -59,7 +60,17 @@ QM  --traces-->  Memorable  (native QM integration)
 
 { "kind": "agent_activity", "anchor_track_id": 3, "hook": "customer_feedback.detected",
   "workers": [{ "name": "Context", "state": "running" | "done" | "failed", "note": "searching GBrain" }] }
+
+{ "kind": "context_delta", "person_id": "matthew", "delta_kind": "preference", "text": "+ prefers async demos" }
 ```
+
+`context_delta`: one per `relationship.updated` delta, so the person card visibly compounds mid-conversation (append under the card, fade old ones).
+
+`person_card` additive fields from GBrain (optional, older clients ignore them):
+`seen_before: { when: "2026-09-27 12:03", ago: "2h ago", where: "YC hackathon, San Francisco" } | null` (previous encounter, from GBrain timeline timestamps),
+`here: "YC hackathon, San Francisco"` (current situation, `WORLD_SITUATION`),
+`relationship: "early Syla user, wants easier setup"` (1-line summary),
+`recent_deltas: ["prefers async demos", ...]` (last 3 learned, newest first).
 
 Builder (feature_request.detected -> coding agent -> PR): same `agent_activity` shape, one worker named `Builder`, plus optional `job_id` on the message and `url` (Vercel preview) / `pr_url` on the worker once known. Notes go `queued: <feature>` -> `coding: <feature>` / `editing Onboarding.tsx` / `building` / `opening PR` -> `PR #N opened · building preview` -> done `PR #N · preview ready · <url>` (or failed `failed: <reason>`). Before coding, a recalled Memorable procedure shows as `{ "kind": "memory_event", "text": "RECALLED PROCEDURE", "detail": "<title> · <n> steps" }`.
 

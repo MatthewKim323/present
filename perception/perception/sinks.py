@@ -40,11 +40,8 @@ class StubGBrainSink:
     Appends events to a local JSONL (events only, never transcripts/footage) and answers
     person_context() from what it has seen this run plus optional meta in people.json.
 
-    TODO(gbrain): replace with the real client once hosted vs local GBrain is decided:
-      - person.encountered / person.enrolled -> put_page people/<person_id> + timeline entry
-      - conversation.completed -> timeline entry on each speaker's page (summary only)
-      - decision/commitment/customer_feedback/physical_bug -> put_page + add_link to person + project
-      - person_context -> get_page people/<id> (role/company) + open commitments via backlinks
+    The real client is GBrainIOSink (perception/gbrain.py, hosted gbrain.io); this stub stays as its
+    fallback when gbrain.io is unauthorized or unreachable.
     """
 
     name = "gbrain"

@@ -6,7 +6,8 @@ Raw perception in, structured WorldEvents out. Implements `contracts/EVENTS.md` 
 Quest / sim --/ws/quest--> faces (YuNet+SFace, local) --> person.encountered / person.enrolled
                        \-> audio (energy VAD -> faster-whisper) -> per-encounter buffer (memory only)
                                  -> Claude extraction -> decision / commitment / customer_feedback / physical_bug / task + conversation.completed
-every WorldEvent -> GBrain sink (stub, TODO) + QM sink (POST $QM_URL/world-events) + HUD (/ws/hud + /ws/quest)
+                                 -> live pass every ~20s (haiku) -> relationship.updated (card compounds mid-conversation)
+every WorldEvent -> GBrain sink (gbrain.io, stub fallback) + QM sink (POST $QM_URL/world-events) + HUD (/ws/hud + /ws/quest)
 ```
 
 ## Setup
@@ -21,6 +22,20 @@ uv run python -m perception               # world service on :8787
 ```
 
 First start downloads the whisper model (`base.en`, ~150MB) in the background; `/health` shows `"asr": "loading"` until ready. Vision works immediately.
+
+## GBrain (hosted gbrain.io)
+
+```bash
+uv run python -m perception.gbrain_auth          # once, a human approves in the browser (scope memory:full only)
+uv run python -m perception.gbrain_auth --check  # refresh + whoami
+uv run python scripts/seed_gbrain.py --reset     # seed/**.md -> gbrain.io; deletes WORLD-created pages first (every take identical)
+```
+
+`perception/.env.gbrain` (chmod 600, gitignored) holds client_id + refresh token; access tokens refresh automatically. When it exists the service uses `GBrainIOSink` (`perception/gbrain.py`), else the stub. Force with `GBRAIN_MODE=io|stub`. If gbrain.io is down or unauthorized, writes are skipped for 30s and cards fall back to the stub, so the demo never dies.
+
+Pages: `people/<id>` (human-curated, created only if missing, never overwritten), `relationships/<wearer>-<id>` (WORLD-owned: summary, what we know, recent, open loops), `events/<situation>`, `projects/<slug>`, and one page per signal under `feedback/ commitments/ decisions/ feature-requests/ bugs/`, linked to person + project + situation. Encounters (max once per person per 10 min) and conversation summaries become timeline entries; transcripts never leave memory. Writes run on a background queue; relationship state lives in memory (hydrated from GBrain at startup), so `person_context` is instant and the card shows `seen_before`, `here`, `relationship`, `recent_deltas` on top of the 4 base fields. Only memory tools are callable (allowlist in `gbrain.py`).
+
+Edit `seed/people/matthew.md` + `seed/relationships/stephen-matthew.md` (fill the `TODO(matt)` lines; TODO values never show on the HUD), then re-run the seed script.
 
 ## Enroll people (opt-in only)
 
@@ -87,17 +102,17 @@ uv run python -m perception.demo_inject --feature --via-llm   # Matthew asks Ste
 
 ## Config (env)
 
-`WORLD_PORT` (8787), `WORLD_MATCH_THRESHOLD` (0.40, SFace cosine, top-3 mean), `WORLD_ASR` (`faster-whisper` \| `none`), `WORLD_ASR_MODEL` (`base.en`, try `small.en`), `WORLD_LLM_MODEL` (`claude-sonnet-5`), `WORLD_CONV_GAP` (10s silence ends a conversation), `WORLD_LEAVE_GRACE` (8s after the person leaves frame), `WORLD_ENCOUNTER_DEBOUNCE` (60s per person), `WORLD_WEARER_ID`/`WORLD_WEARER_NAME` (matthew/Matthew), `QM_URL`, `WORLD_PEOPLE_PATH`, `WORLD_EVENTS_LOG`.
+`WORLD_PORT` (8787), `WORLD_MATCH_THRESHOLD` (0.40, SFace cosine, top-3 mean), `WORLD_ASR` (`faster-whisper` \| `none`), `WORLD_ASR_MODEL` (`base.en`, try `small.en`), `WORLD_LLM_MODEL` (`claude-sonnet-5`), `WORLD_CONV_GAP` (10s silence ends a conversation), `WORLD_LEAVE_GRACE` (8s after the person leaves frame), `WORLD_ENCOUNTER_DEBOUNCE` (60s per person), `WORLD_WEARER_ID`/`WORLD_WEARER_NAME` (stephen/Stephen), `WORLD_LIVE_MODEL` (`claude-haiku-4-5`), `WORLD_LIVE_EVERY_S` (20) / `WORLD_LIVE_EVERY_N` (4), `WORLD_LIVE=0` disables live passes, `WORLD_SITUATION` (JSON, JSON file path, or a name; default YC hackathon, San Francisco, 2026-09-27), `GBRAIN_MODE` (io \| stub, default auto), `GBRAIN_ENCOUNTER_DEBOUNCE` (600s), `QM_URL`, `WORLD_PEOPLE_PATH`, `WORLD_EVENTS_LOG`.
 
 ## Privacy
 
 - Recognition only against the local enrolled set; no external lookup.
-- Frames and audio are decoded in memory and dropped after processing; transcripts live only in the open encounter's buffer and are cleared after extraction. `data/events.jsonl` (stub GBrain) holds WorldEvents only.
+- Frames and audio are decoded in memory and dropped after processing; transcripts live only in the open encounter's buffer and are cleared after extraction. `data/events.jsonl` (stub GBrain) holds WorldEvents only. GBrain gets summaries and extracted signals, never transcripts.
 
 ## Swapping parts
 
 - ASR: implement `Transcriber.transcribe(segment) -> str` in `perception/audio.py`, register in `make_transcriber`.
-- GBrain: implement `emit(event)` + `person_context(person_id)` (see `StubGBrainSink` TODO in `perception/sinks.py`) and swap it in `WorldService.__init__`.
+- GBrain: `GBrainIOSink` in `perception/gbrain.py` implements the `GBrainSink` protocol (`emit` + `person_context`); `WorldService._make_gbrain` picks it.
 - New sink: any object with `name` and `async emit(event)`, add to `FanOut`.
 
 ## Tests / bench
