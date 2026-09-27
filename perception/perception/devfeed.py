@@ -185,11 +185,16 @@ class DevFeed:
                 sw["anchor_track_id"] = msg["anchor_track_id"]
             sw["workers"], sw["t"] = workers, now
             self._latest_hook = hook
-        elif kind == "memory_event" and self._latest_hook in self.swarms:
+        elif kind == "memory_event":
             text = str(msg.get("text") or "").upper()
             slot = {"RECALLED PROCEDURE": "recalled", "PROCEDURE LEARNED": "learned"}.get(text)
-            if slot:
-                self.swarms[self._latest_hook][slot] = parse_procedure(str(msg.get("detail") or ""))
+            eid, hook = msg.get("event_id"), msg.get("hook")
+            # QM's tracker tags recall/learn with the run's event_id: land it on exactly that swarm.
+            sw = next((x for x in self.swarms.values() if eid and x.get("event_id") == eid), None)
+            if sw is None and not eid:
+                sw = self.swarms.get(str(hook)) if hook else self.swarms.get(self._latest_hook)
+            if slot and sw is not None:
+                sw[slot] = parse_procedure(str(msg.get("detail") or ""))
 
     def _job(self):
         jobs = [j for j in self.builder.jobs.values() if j.created >= self.reset_at or j.state in ACTIVE]

@@ -184,6 +184,19 @@ def test_qm_only_swarm_and_recall_toast():
     feed.close()
 
 
+def test_recall_and_learn_land_on_the_swarm_with_their_event_id():
+    feed, _, _ = make()
+    feed.on_hud({**QM_LANES, "hook": "feature_request.detected", "event_id": "e1"})
+    feed.on_hud({**QM_LANES, "hook": "customer_feedback.detected", "event_id": "e2"})
+    feed.on_hud({"kind": "memory_event", "text": "RECALLED PROCEDURE", "detail": "dispatch builder · 3 steps",
+                 "event_id": "e1", "hook": "feature_request.detected"})
+    feed.on_hud({"kind": "memory_event", "text": "PROCEDURE LEARNED", "detail": "x · 2 steps", "event_id": "gone"})
+    assert feed.swarms["feature_request.detected"]["recalled"] == {"title": "dispatch builder", "steps": 3}
+    assert feed.swarms["customer_feedback.detected"]["recalled"] is None
+    assert all(sw["learned"] is None for sw in feed.swarms.values())
+    feed.close()
+
+
 def test_builder_own_agent_activity_is_ignored_and_newer_direct_job_wins():
     feed, b, _ = make()
     feed.on_hud({**QM_LANES, "hook": "customer_feedback.detected"})
