@@ -568,6 +568,7 @@ export class DesktopDev {
   draw(ctx, placed, vr) {
     const hud = this.hud;
     this.hits = [];
+    this.ssRect = null; // QM SWARM panel rect (memorypanel.js stacks under it)
     const gh = hud.devGithub, ss = hud.qmSwarm;
     const t = performance.now();
     this._cockpit(ctx, placed, vr, gh, ss, t);
@@ -620,7 +621,7 @@ export class DesktopDev {
         x = ghRect ? ghRect.x : leftX(w);
         y = ghRect ? ghRect.y + ghRect.h + 10 : y;
       }
-      put(c, x, y);
+      this.ssRect = put(c, x, y);
     }
   }
 

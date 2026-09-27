@@ -1,5 +1,6 @@
 import { DEV_SCRIPT } from './devpanels.js';
 import { VISION_SCRIPT, VISION_LEAD, mockResolve } from './visionfx.js';
+import { MEMORY_SCRIPT } from './memorypanel.js';
 
 // Scripted demo sequence (?mock=1). Exercises all three HUD states with no server.
 // Track 3 is anchored by the scripted `vision` stream (visionfx.js: unknown face -> "I'm Matthew" ->
@@ -11,6 +12,7 @@ const BASE_SCRIPT = [
   [5200, { kind: 'memory_event', text: 'COMMITMENT REMEMBERED', detail: 'ping Matthew when !recap ships' }],
   // the swarm itself is the QM SWARM panel (qm_swarm in DEV_SCRIPT); no separate agent_activity entries
   ...DEV_SCRIPT, // dev cockpit: context_delta, qm_swarm, dev_github
+  ...MEMORY_SCRIPT, // Memorable: recording -> extracting -> learned, then recalled on run 2 (memorypanel.js)
 ];
 
 export const DEMO_SCRIPT = [...VISION_SCRIPT, ...BASE_SCRIPT.map(([t, m]) => [t + VISION_LEAD, m])].sort((a, b) => a[0] - b[0]);

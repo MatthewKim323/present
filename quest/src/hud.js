@@ -4,6 +4,7 @@
 import { applyDev, withDeltas } from './devpanels.js';
 import { applyVision } from './visionfx.js';
 import { observeSwarm } from './swarmviz.js';
+import { applyMemory } from './memorypanel.js';
 
 const TOAST_MS = 4200;
 const TRACK_STALE_MS = 4000;
@@ -27,6 +28,7 @@ export class HudState {
   apply(msg) {
     if (!msg || typeof msg !== 'object') return;
     observeSwarm(this, msg); // spatial QM swarm graph (swarmviz.js), read-only
+    if (applyMemory(this, msg)) { this.touch(); return; } // Memorable: procedure phases + library (memorypanel.js)
     if (applyDev(this, msg)) { this.touch(); return; } // dev cockpit + context_delta (devpanels.js)
     if (applyVision(this, msg)) { this.touch(); return; } // perception overlay: vision / face_capture / relationship_vector (visionfx.js)
     if (msg.type === 'person.encountered' && msg.payload) {
