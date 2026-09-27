@@ -46,6 +46,8 @@ QM  --traces-->  Memorable  (native QM integration)
 | `physical_bug.detected` | `{ device, symptom, repro }` |
 | `task.demonstrated` / `world.task_requested` | `{ instruction, target: "whiteboard"\|"object"\|..., snapshot_ref? }` |
 | `object.state_changed` / `object.last_seen` | `{ object, state?, location? }` |
+| `world.watch_requested` | `{ instruction, person_id?, object? }` (the wearer sets a standing watch out loud: "next time Matthew brings up pricing, prep a counter-offer". QM turns it into a WorldWatch with one model call; later events matching it fire its action. See QM `docs/worldhooks.md`) |
+| `world.entity_adopted` | `{ entity_kind: "person"\|"object", entity_id, label, track_id? }` (pinch on a tracked person/object: the world service forwards `{kind:"gesture",type:"pinch",target_track_id}` as this event. QM gives the entity one persistent thread `world:entity:<kind>:<id>`; every later event mentioning it lands there) |
 | `relationship.updated` | `{ person_id, deltas: [{ kind, text }], summary, encounter_id, utterances_seen }` emitted LIVE during a conversation (every ~20s or 4 utterances, `perception/live.py`, small fast model). `kind`: `fact` \| `preference` \| `topic` \| `sentiment` \| `shared_context` \| `open_loop_you_owe` \| `open_loop_owes_you`; `text` is a terse HUD line ("prefers async demos"). Only new info, never transcript. GBrain writes it to `relationships/<wearer>-<person>` immediately |
 
 ## HUD messages (world service -> Quest, over /ws/hud and /ws/quest)
@@ -63,6 +65,8 @@ QM  --traces-->  Memorable  (native QM integration)
 
 { "kind": "context_delta", "person_id": "matthew", "delta_kind": "preference", "text": "+ prefers async demos" }
 ```
+
+QM swarm tracker (WorldHooks) posts to `POST :8787/hud`: `agent_activity` for every routed event and fired watch (`note` = the worker's current tool-call purpose, `anchor_track_id` from `payload.anchor_track_id` or `payload.track_id`), `{ "kind": "memory_event", "text": "RECALLED PROCEDURE", "detail": "<title> · <n> steps" }` when Memorable recall fires on a turn, and after a run that recalled finishes `{ "kind": "memory_event", "text": "LEARNED FROM RUN 1", "detail": "tool calls A -> B · turns C -> D · Es -> Fs" }` with measured numbers.
 
 `context_delta`: one per `relationship.updated` delta, so the person card visibly compounds mid-conversation (append under the card, fade old ones).
 
