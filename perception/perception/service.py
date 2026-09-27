@@ -146,6 +146,8 @@ class WorldService:
         for t in self._tasks:
             t.cancel()
         self.devfeed.close()
+        if self.builder.preview:
+            self.builder.preview.stop()
 
     async def _load_asr(self) -> None:
         try:

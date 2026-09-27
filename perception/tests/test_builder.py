@@ -70,7 +70,7 @@ class FakeMemory:
 
 def make(tmp_path, **kw):
     cfg = BuilderConfig(poll_s=0.01, timeout_s=kw.pop("timeout_s", 5), no_pr_grace_s=kw.pop("grace", 0.05),
-                        workdir=tmp_path / "w", procedures_dir=tmp_path / "p")
+                        workdir=tmp_path / "w", procedures_dir=tmp_path / "p", local_preview=kw.pop("local_preview", False))
     sent = []
 
     async def bc(m):
@@ -269,3 +269,25 @@ async def test_learned_and_recalled_procedures_reach_the_hook(tmp_path):
     origin = seen[1][2]
     assert origin["event_id"] == "evt_9" and "matthew" in origin["people"] and origin["harness"] == "claude-code"
     assert origin["metrics"]["tool_calls"] == 3 and "doc" not in job.procedure
+
+
+class FakePreview:
+    async def start(self, job):
+        return "http://10.0.0.5:4300/"
+
+    async def screenshot(self, url):
+        return b"\xff\xd8jpeg"
+
+    def stop(self):
+        pass
+
+
+async def test_local_preview_serves_branch_and_sends_shot(tmp_path):
+    b, sent = make(tmp_path, github=FakeGitHub(preview_state="failure"))
+    b.preview = FakePreview()
+    job = await b.dispatch("evt_p", SPEC, person_id="matthew")
+    await finish(b, job)
+    assert job.state == "done" and job.preview_url == "http://10.0.0.5:4300/"
+    assert notes(sent)[-1] == ("done", "PR #7 · preview ready · http://10.0.0.5:4300/")
+    shot = [m for m in sent if m.get("kind") == "preview_shot"]
+    assert shot and shot[0]["pr"] == 7 and shot[0]["url"] == job.preview_url and shot[0]["jpeg_b64"]

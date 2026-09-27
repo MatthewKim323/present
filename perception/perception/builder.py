@@ -13,11 +13,13 @@ No network in tests: runner, GitHub and Memorable are injectable (see tests/test
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
 import re
 import shutil
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -69,6 +71,10 @@ class BuilderConfig:
     memorable_key: str = ""
     procedures_dir: Path = DATA_DIR / "procedures"
     recall_min_score: float = 0.5
+    local_preview: bool = True  # serve the PR branch from the local checkout (vite preview) and screenshot it for the HUD
+    preview_host: str = ""  # LAN address the headset can reach; auto-detected when empty
+    preview_port: int = 4300
+    chrome_bin: str = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
     @classmethod
     def from_env(cls) -> "BuilderConfig":
@@ -76,6 +82,10 @@ class BuilderConfig:
         mem = _load_env_file(Path(e("BUILDER_MEMORABLE_ENV", str(ROOT_DIR.parent / ".env.memorable"))))
         return cls(
             repo=e("BUILDER_REPO", cls.repo),
+            local_preview=e("BUILDER_LOCAL_PREVIEW", "1") in ("1", "true", "yes"),
+            preview_host=e("BUILDER_PREVIEW_HOST", ""),
+            preview_port=int(e("BUILDER_PREVIEW_PORT", cls.preview_port)),
+            chrome_bin=e("BUILDER_CHROME_BIN", cls.chrome_bin),
             subdir=e("BUILDER_SUBDIR", cls.subdir).strip("/"),
             preview_bypass=e("BUILDER_PREVIEW_BYPASS", ""),
             mode=e("BUILDER_MODE", cls.mode),
@@ -606,6 +616,93 @@ class ProcedureMemory:
         return {"stored": True, "title": doc["title"], "steps": len(doc["steps"]), "path": str(path), "doc": doc}
 
 
+# ---------------------------------------------------------------- local preview
+
+def lan_ip() -> str:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
+        try:
+            sk.connect(("10.255.255.255", 1))  # no packets sent; picks the outbound interface
+            return sk.getsockname()[0]
+        except OSError:
+            return "127.0.0.1"
+
+
+class LocalPreview:
+    """`vite preview` of the PR branch from the builder's checkout, reachable from the headset, plus a JPEG screenshot."""
+
+    keep = 3
+
+    def __init__(self, cfg: BuilderConfig) -> None:
+        self.cfg = cfg
+        self.procs: dict[str, asyncio.subprocess.Process] = {}
+        self._n = 0
+
+    def app_dir(self, job: Job) -> Path:
+        d = self.cfg.workdir / job.id
+        return d / self.cfg.subdir if self.cfg.subdir else d
+
+    async def start(self, job: Job) -> str | None:
+        app = self.app_dir(job)
+        if not (app / "package.json").exists():
+            return None
+        if not (app / "dist" / "index.html").exists():
+            code, out = await _sh("npm", "run", "build", cwd=app, timeout=300)
+            if code:
+                log.warning("preview build failed: %s", out[-200:])
+                return None
+        port = self.cfg.preview_port + (self._n % 50)
+        self._n += 1
+        proc = await asyncio.create_subprocess_exec("npx", "vite", "preview", "--host", "0.0.0.0", "--port", str(port), "--strictPort",
+                                                    cwd=app, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        self.procs[job.id] = proc
+        for old in list(self.procs)[:-self.keep]:
+            self.stop_one(old)
+        url = f"http://{self.cfg.preview_host or lan_ip()}:{port}/"
+        async with httpx.AsyncClient(timeout=2) as c:
+            for _ in range(40):
+                try:
+                    if (await c.get(f"http://127.0.0.1:{port}/")).status_code < 500:
+                        return url
+                except httpx.HTTPError:
+                    pass
+                if proc.returncode is not None:
+                    return None
+                await asyncio.sleep(0.5)
+        return None
+
+    async def screenshot(self, url: str, w: int = 1280, h: int = 1600) -> bytes | None:
+        if not Path(self.cfg.chrome_bin).exists():
+            return None
+        out = Path(tempfile.mkdtemp(prefix="world-shot-")) / "shot.png"
+        code, _ = await _sh(self.cfg.chrome_bin, "--headless=new", "--disable-gpu", "--hide-scrollbars", f"--window-size={w},{h}",
+                            "--virtual-time-budget=4000", f"--screenshot={out}", url.replace(lan_ip(), "127.0.0.1"), timeout=60)
+        if code or not out.exists():
+            return None
+        try:
+            from PIL import Image  # noqa: PLC0415
+            import io  # noqa: PLC0415
+            buf = io.BytesIO()
+            Image.open(out).convert("RGB").save(buf, "JPEG", quality=72)
+            return buf.getvalue()
+        except ImportError:
+            import cv2  # noqa: PLC0415
+            img = cv2.imread(str(out))
+            ok, enc = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 72])
+            return enc.tobytes() if ok else None
+        finally:
+            shutil.rmtree(out.parent, ignore_errors=True)
+
+    def stop_one(self, job_id: str) -> None:
+        p = self.procs.pop(job_id, None)
+        if p and p.returncode is None:
+            p.terminate()
+
+    def stop(self) -> None:
+        for jid in list(self.procs):
+            self.stop_one(jid)
+
+
 # ---------------------------------------------------------------- Builder
 
 def activity(job: Job, state: str, note: str) -> dict[str, Any]:
@@ -629,6 +726,7 @@ class Builder:
         self.github = github or GhCli()
         self.procedures = procedures or ProcedureMemory(cfg)
         self.anchor = anchor or (lambda pid: None)
+        self.preview = LocalPreview(cfg) if cfg.local_preview and getattr(self.runner, "name", "") == "local" else None
         self.on_procedure = on_procedure  # ("learned" | "recalled", procedure doc, origin) -> e.g. mirror into GBrain
         self.jobs: dict[str, Job] = {}
         self.by_event: dict[str, str] = {}
@@ -678,6 +776,22 @@ class Builder:
         except Exception:  # noqa: BLE001
             log.exception("procedure hook failed")
 
+    async def _local_preview(self, job: Job) -> None:
+        assert self.preview is not None
+        await self._set(job, "done", f"PR #{job.pr_number} · starting local preview")
+        url = await self.preview.start(job)
+        if not url:
+            await self._set(job, "done", f"PR #{job.pr_number} opened · preview unavailable")
+            return
+        job.preview_url = url
+        job.mark("local_preview_ready")
+        await self._set(job, "done", f"PR #{job.pr_number} · preview ready · {url}")
+        shot = await self.preview.screenshot(url)
+        if shot:
+            job.mark("preview_shot")
+            await self.broadcast({"kind": "preview_shot", "job_id": job.id, "pr": job.pr_number, "title": f"[WORLD] {job.feature}",
+                                  "url": url, "jpeg_b64": base64.b64encode(shot).decode(), "w": 1280, "h": 1600})
+
     async def _progress(self, job: Job, note: str) -> None:
         if job.state in ("queued", "running"):
             await self._set(job, "running", note)
@@ -721,7 +835,10 @@ class Builder:
                         job.pr_number, job.pr_url, job.head_sha = pr["number"], pr["url"], pr.get("headRefOid")
                         job.mark("pr_opened")
                         await self._set(job, "pr_open", f"PR #{job.pr_number} opened · building preview")
-                if job.pr_number is not None:
+                if job.pr_number is not None and self.preview is not None:
+                    if run_task.done():  # local preview is served from the checkout once the coder is finished
+                        break
+                elif job.pr_number is not None:
                     if hasattr(self.github, "head_sha"):
                         job.head_sha = await self.github.head_sha(job.repo, job.pr_number) or job.head_sha
                     if job.head_sha:
@@ -757,6 +874,8 @@ class Builder:
                 result = None
         if result:
             job.stats.update({k: v for k, v in result.info.items() if k in ("tool_calls", "num_turns", "total_cost_usd", "duration_ms")})
+        if self.preview and job.pr_number and result and result.ok:
+            await self._local_preview(job)
         if result and result.trace:
             try:
                 job.procedure = await self.procedures.record(job, result.trace)
