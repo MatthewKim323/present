@@ -195,6 +195,7 @@ class WorldService:
         if kind == "frame":
             self.frames_in += 1
             self._latest_frame = (base64.b64decode(msg["jpeg_b64"]), float(msg.get("ts") or time.time()))
+            self.debug_jpeg = self._latest_frame[0]  # RAM only, overwritten every frame, never written to disk
             self._frame_event.set()
         elif kind == "audio":
             pcm = pcm16_to_float(base64.b64decode(msg["pcm16_b64"]))
@@ -444,6 +445,15 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     @app.get("/people")
     async def people():
         return {pid: {"name": p.name, "samples": len(p.embeddings)} for pid, p in svc.store.people.items()}
+
+    @app.get("/debug/frame")
+    async def debug_frame():
+        """Latest camera frame as the headset sent it (RAM only), to check what the Quest camera actually sees."""
+        from fastapi.responses import Response
+        jpeg = getattr(svc, "debug_jpeg", None)
+        if not jpeg:
+            raise HTTPException(404, "no frame yet")
+        return Response(jpeg, media_type="image/jpeg", headers={"cache-control": "no-store"})
 
     @app.post("/debug/utterance")
     async def debug_utterance(body: dict[str, Any]):
