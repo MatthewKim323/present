@@ -293,7 +293,14 @@ class WorldService:
             pid, name, tid = (t.person_id, t.label, t.track_id) if t else (None, None, None)
         self.intro.on_utterance(u)
         # live caption on the HUD (transient: shown, never stored)
-        who = self.s.wearer_name if getattr(u, "speaker", None) == "wearer" else (name if name and not str(name).upper().startswith("UNKNOWN") else "")
+        # who spoke, by loudness: the wearer's mic is at their mouth (loud, close); the person across is quieter
+        from .intro import attribute
+        self._cap_levels = (getattr(self, "_cap_levels", []) + [u.rms_db])[-12:]
+        side, _ = attribute(getattr(u, "speaker", None), u.rms_db, self._cap_levels)
+        other = name if name and not str(name).upper().startswith("UNKNOWN") else "Them"
+        if side == "unclear":  # not enough level history yet: louder than the running median = wearer
+            side = "wearer" if u.rms_db >= sorted(self._cap_levels)[len(self._cap_levels) // 2] else "other"
+        who = self.s.wearer_name if side == "wearer" else other
         await self.hub.broadcast({"kind": "caption", "text": u.text[:200], "who": who})
         closed = self.conv.add_utterance(u, pid, name, tid)
         for enc in closed:
