@@ -84,6 +84,45 @@ Builder (feature_request.detected -> coding agent -> PR): same `agent_activity` 
                 "url": "https://syla-demo-git-....vercel.app", "pr_url": "https://github.com/MatthewKim323/syla-demo/pull/3" }] }
 ```
 
+### Dev cockpit (GitHub + Claude Code panels, `perception/devfeed.py`)
+
+The world service owns all GitHub / Claude access; the Quest never holds a token. Both messages are full
+snapshots (replace, don't merge), sent on change and re-sent every ~10s so late clients catch up.
+
+```json
+{ "kind": "dev_github", "repo": "qtzx06/opal",
+  "prs": [{ "number": 7, "title": "[WORLD] Add Slack onboarding", "branch": "world/add-slack-onboarding-b1234",
+            "state": "open" | "draft", "checks": "pass" | "fail" | "pending" | "none",
+            "additions": 42, "deletions": 8, "files": ["app/src/Onboarding.tsx", "..."],
+            "preview_url": "https://opal-git-....vercel.app" | null, "url": "https://github.com/qtzx06/opal/pull/7",
+            "hunk_file": "app/src/Onboarding.tsx",
+            "hunk": [{ "t": "+" | "-" | " ", "s": "<one source line, <=90 chars>" }] }] }
+
+{ "kind": "dev_session", "job_id": "b123451", "feature": "Add Slack onboarding",
+  "state": "queued" | "running" | "pr_open" | "done" | "failed", "mode": "local" | "cloud",
+  "step": "editing Onboarding.tsx", "tail": [{ "tool": "Edit", "target": "app/src/Onboarding.tsx" }],
+  "elapsed_s": 134, "procedure": { "title": "...", "steps": 8, "score": 0.8 } | null,
+  "session_url": "https://claude.ai/code/..." | null, "pr": 7 | null }
+```
+
+`prs`: open PRs on the Builder repo whose title starts with `[WORLD]`, newest first (max 4). Only the newest has a
+non-empty `hunk` (first hunk of the first non-lockfile, a few lines). `tail`: last ~10 tool calls of the live
+builder session, tool name + short target only (path, command head, pattern), never file contents, redacted.
+`session_url` is set when the cloud routine runner is used. Polling runs every ~5s while a Builder job is
+active, ~30s otherwise.
+
+Quest -> world service (over /ws/quest), acting on those panels:
+
+```json
+{ "kind": "dev_action", "action": "approve" | "comment" | "open_preview", "pr": 7, "text": "optional comment" }
+```
+
+`approve` -> `gh pr review --approve` (never merge), `comment` -> `gh pr comment` (canned text if `text` is
+empty), both only against the Builder repo and only for a PR currently listed in `dev_github`. `open_preview`
+is handled client-side (desktop: overlay iframe + link; XR: opened when the session ends) and only logged by
+the service. The result comes back as a `memory_event` toast (`PR APPROVED` / `COMMENT POSTED` /
+`APPROVE FAILED`, detail `#7 · <reason>`).
+
 Debug: `/ws/quest?debug=1` also streams `{ "kind": "tracks", "tracks": [{ "track_id", "bbox", "person_id", "label" }] }` for anchoring.
 
 ## Quest -> world service (over /ws/quest)
@@ -93,6 +132,7 @@ Debug: `/ws/quest?debug=1` also streams `{ "kind": "tracks", "tracks": [{ "track
 { "kind": "audio", "ts": ..., "pcm16_b64": "...", "sample_rate": 16000 }
 { "kind": "gesture", "type": "pinch", "target_track_id": 3 }
 { "kind": "label", "track_id": 3, "name": "Alex" }   // "that's Alex" enrollment
+{ "kind": "dev_action", "action": "approve", "pr": 7 }   // dev cockpit, see HUD messages above
 ```
 
 ## Privacy invariants
