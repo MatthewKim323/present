@@ -13,6 +13,7 @@ import { XrCaptions } from './captions.js';
 import { XrMemory } from './memorypanel.js';
 import { ANIM_HZ, due, safe, frameBegin, frameEnd, perfLine, drawPerf, drawOffline, offlineText } from './perf.js';
 import { XR, xrFrame, xrAt, show } from './layout.js';
+import { XrInput } from './xrinput.js';
 
 const M_PER_PX = 0.0012; // panel css px -> meters (300px card ~ 0.36 m)
 
@@ -109,8 +110,26 @@ export class XrHud {
     this.captions = new XrCaptions(this.scene, this.hud); // live transcript strip
     this.mem = new XrMemory(this.scene, this.hud); // Memorable stack under the QM SWARM panel
 
-    // Hand pinch (and controller trigger) arrive as `select`.
-    session.addEventListener('select', (ev) => this._onSelect(ev));
+    // Lasers, hover, click, move, resize (xrinput.js). Getters, not meshes: modules rebuild meshes when sizes change.
+    safe('xr input init', () => {
+      const I = (this.input = new XrInput(this));
+      const cards = [];
+      I.register('card', () => { cards.length = 0; for (const [k, m] of this.meshes) if (k.startsWith('card:')) cards.push([k, m.mesh]); return cards; }, { pass: true });
+      I.register('gh', () => this.dev.meshes.gh?.mesh, { pass: true });
+      I.register('ss', () => this.dev.meshes.ss?.mesh);
+      I.register('memorable', () => this.mem.m?.mesh);
+      I.register('brain', () => this.brain.m?.mesh);
+      I.register('graph', () => (this.swarm.group.visible ? this.swarm.group : null), { proxy: [-0.6, -0.62, 0.66, 0.16] });
+      I.register('preview', () => this.dev.pv?.mesh, { pass: true, grab: false });
+    });
+
+    // Hand pinch (and controller trigger) arrive as `select`. xrinput.js gets first say (grab / resize / panel);
+    // a pinch on nothing, a card, a GitHub button or the preview runs the original path.
+    session.addEventListener('select', (ev) => {
+      let used = false;
+      if (this.input) safe('xr input select', () => { used = this.input.consumeSelect(ev); });
+      if (!used) this._onSelect(ev);
+    });
     session.addEventListener('end', () => {
       renderer.setAnimationLoop(null);
       this.session = null;
@@ -252,11 +271,13 @@ export class XrHud {
       }
     }
     safe('xr dev', () => this.dev.frame(head, headQ, this.meshes, this.config.cardDistance));
+    if (this.input) safe('xr input apply', () => this.input.apply(head)); // user-placed panels, before Memorable reads ss
     if (show('memorable')) safe('xr memory', () => this.mem.frame(head, headQ, this.dev)); else this.mem._drop();
     safe('xr vision', () => this.vfx.frame(this, head, headQ));
     if (show('swarm3d')) safe('xr swarm', () => this.swarm.frame(head, headQ));
     if (show('brain')) safe('xr brain', () => this.brain.frame(head, headQ, this.meshes, this.dev));
     safe('xr captions', () => this.captions.frame(head, headQ));
+    if (this.input) safe('xr input', () => this.input.frame(frame, head));
   }
 
   // Normalized camera-frame coords -> world point at `dist` along the ray.

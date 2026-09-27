@@ -49,6 +49,7 @@ src/hud.js            HUD state (cards, toasts, activity, track bboxes)
 src/panels.js         canvas rasterizer for the 3 panels (shared by both renderers)
 src/desktop.js        desktop renderer over the webcam
 src/xr.js             immersive-ar renderer, pinch -> gesture
+src/xrinput.js        XR lasers, hover, click, move + resize panels (registry of panel getters from xr.js)
 src/mock.js           scripted demo HUD sequence (?mock=1)
 src/perf.js           ?perf / ?lite / ?diag, OFFLINE chip, frame stats, redraw rate gates
 src/layout.js         ONE placement plan for every HUD layer (zones around the person) + ?hud= density
@@ -89,6 +90,14 @@ card (card first, radar second). XR: one unit plane per
 face at `?dist=`, sized from the bbox and `?hfov=`, head-facing, under the cards.
 `?mock=1` scripts it first (unknown -> intro -> learning -> recognized -> radar grows)
 and starts the rest of the demo 6.5s later.
+
+## XR pointing (`src/xrinput.js`)
+
+- Point a hand (or controller) at a panel: thin laser + reticle, the panel edge lights up. Hand down = no laser.
+- Quick pinch (trigger) = click: GitHub APPROVE / OPEN PREVIEW / COMMENT, preview, person card. Pinch on nothing = the old person pick (entity adopt).
+- Pinch-hold 250 ms and drag = move the panel (push / pull the hand for distance); release drops it world-locked. Controller grip grabs at once.
+- Resize: pinch the bottom-right corner handle and drag, or pinch the same panel with both hands and spread / squeeze (0.5x to 2.5x).
+- Double-pinch empty space = reset every panel to the layout plan. Placement + scale persist per panel in localStorage.
 
 ## HUD layout + density (`src/layout.js`)
 
