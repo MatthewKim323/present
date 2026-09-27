@@ -35,35 +35,36 @@ World event types: `person.encountered`, `conversation.completed`, `decision.det
 Events are structured JSON, never transcripts:
 
 ```json
-{ "type": "commitment.detected", "actor": "Matthew", "recipient": "Alex",
-  "project": "Syla", "commitment": "Send updated onboarding demo", "confidence": 0.94 }
+{ "type": "commitment.detected", "actor": "Matthew", "recipient": "Stephen",
+  "project": "opal", "commitment": "Send screenshots of the flow", "confidence": 0.94 }
 ```
 
 QM fork adds a first-class ingress: `POST /world-events` alongside cron / webhook / watch.
 
-## THE demo (one flow, don't build six)
+## THE demo (one flow, don't build six). Updated 2026-09-27: replaces the old Alex/Syla/Canvas story
 
-1. Wear Quest, see **Alex** (opted-in, enrolled). HUD shows GBrain context: role, last interaction, open loop.
-2. Alex: "Canvas setup was confusing, we'd roll it out if onboarding were easier." matt: "I'll send you the new onboarding demo." matt never talks to the AI.
-3. WORLD extracts: customer feedback + buying signal + commitment (matt -> Alex).
-4. GBrain updates Alex / Syla / Canvas onboarding / feedback.
-5. `customer_feedback.detected` fires QM WorldHook -> swarm: **context agent** (who/what), **product agent** (N other Canvas complaints, likely OAuth stage, draft issue), **follow-up agent** (find demo, draft reply, ask approval before sending).
-6. Memorable captures the trace -> procedure `handle_in_person_customer_feedback` (resolve person, resolve project, persist feedback, search similar, merge signals, resolve commitments, prep follow-up, approval before external send).
-7. **Customer #2** says similar thing -> Memorable recall -> QM runs learned procedure. Show run 1 vs run 2 metrics (turns, tool calls, corrections, time). **Use real measured numbers only**, not the placeholders in the pitch or Memorable's 19% claim.
+Product is **Opal** (Stephen's real startup, github.com/qtzx06/opal, web app in `app/`). No Syla, no Canvas, no Alex.
 
-Stretch: whiteboard decision ("legacy auth stays until mobile ships, new stuff uses middleware v2") -> GBrain decision -> later coding worker gets it. Physical bug (LED freezes purple on double-press) -> firmware swarm.
+1. **Stephen** (founder) wears the Quest. He looks at **Matthew** (matt, enrolled, an Opal customer). OpenCV (YuNet + SFace, local) recognizes him; HUD person card comes from GBrain: relationship to Stephen, last seen (timeline timestamps, "2h ago at YC hackathon"), open loops.
+2. They talk. Nobody talks to the AI. During the conversation a rolling pass ships relationship deltas into GBrain (`relationships/stephen--matthew`) and the HUD shows `context_delta` lines: the card compounds live.
+3. Matthew suggests a concrete Opal change -> `feature_request.detected` (plus feedback / commitments).
+4. QM WorldHook swarm (Context / Product / Builder) spins up, status anchored on the HUD. Builder dispatches Claude Code (cloud routine, local `claude -p` fallback) -> PR `[WORLD] <feature>` on qtzx06/opal + Vercel preview URL on the HUD. Never merged.
+5. Memorable records the QM swarm trace and the Claude Code builder trace (cross-harness).
+6. Second similar request -> recall fires off the real-world event (no typed prompt) -> HUD `RECALLED PROCEDURE` + run 1 vs run 2 metrics. **Real measured numbers only.**
+
+QM extension story: reality as a first-class trigger (WorldHooks), WorldWatches (standing watches whose predicate runs over world events, created by voice), entity-bound agents (pinch a person/object to adopt it).
 
 ## HUD: exactly three visual states
 
 1. **Person card**: name, role/company, last topic, owes you / you owe.
-2. **Memory event**: `✓ CUSTOMER FEEDBACK REMEMBERED · Canvas onboarding`.
+2. **Memory event**: `✓ CUSTOMER FEEDBACK REMEMBERED · Opal landing`.
 3. **Agent activity**: WorldHook swarm status, spatially anchored near the person/object that caused it. Pinch/look to select a real thing and assign intelligence to it (RTS over reality).
 
 Subtle, not giant holograms. Don't burn 70% of time on visuals.
 
 ## Privacy (part of the product, not an afterthought)
 
-- Face recognition only for explicitly enrolled, opted-in people. Local embeddings, local match. Unknowns are `UNKNOWN PERSON 03` until matt says "that's Alex".
+- Face recognition only for explicitly enrolled, opted-in people. Local embeddings, local match. Unknowns are `UNKNOWN PERSON 03` until the wearer says "that's <name>".
 - No internet identification.
 - Raw video/audio processed transiently, discarded. Persist events, not footage.
 - Memory stays human-readable (GBrain notes), user-owned.
