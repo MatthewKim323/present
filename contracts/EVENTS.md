@@ -46,7 +46,7 @@ QM  --traces-->  Memorable  (native QM integration)
 | `physical_bug.detected` | `{ device, symptom, repro }` |
 | `task.demonstrated` / `world.task_requested` | `{ instruction, target: "whiteboard"\|"object"\|..., snapshot_ref? }` |
 | `object.state_changed` / `object.last_seen` | `{ object, state?, location? }` |
-| `world.watch_requested` | `{ instruction, person_id?, object? }` (the wearer sets a standing watch out loud: "next time Matthew brings up pricing, prep a counter-offer". QM turns it into a WorldWatch with one model call; later events matching it fire its action. See QM `docs/worldhooks.md`) |
+| `world.watch_requested` | `{ instruction, person_id?, object?, person_name?, topic_terms?: [str], action?, once?, track_id? }` (extras are additive, from the world service's haiku parse, `perception/watches.py`; only the wearer arms watches) (the wearer sets a standing watch out loud: "next time Matthew brings up pricing, prep a counter-offer". QM turns it into a WorldWatch with one model call; later events matching it fire its action. See QM `docs/worldhooks.md`) |
 | `world.entity_adopted` | `{ entity_kind: "person"\|"object", entity_id, label, track_id? }` (pinch on a tracked person/object: the world service forwards `{kind:"gesture",type:"pinch",target_track_id}` as this event. QM gives the entity one persistent thread `world:entity:<kind>:<id>`; every later event mentioning it lands there) |
 | `relationship.updated` | `{ person_id, deltas: [{ kind, text }], summary, encounter_id, utterances_seen }` emitted LIVE during a conversation (every ~20s or 4 utterances, `perception/live.py`, small fast model). `kind`: `fact` \| `preference` \| `topic` \| `sentiment` \| `shared_context` \| `open_loop_you_owe` \| `open_loop_owes_you`; `text` is a terse HUD line ("prefers async demos"). Only new info, never transcript. GBrain writes it to `relationships/<wearer>-<person>` immediately |
 
@@ -75,6 +75,19 @@ QM swarm tracker (WorldHooks) posts to `POST :8787/hud`: `agent_activity` for ev
 `here: "YC hackathon, San Francisco"` (current situation, `WORLD_SITUATION`),
 `relationship: "early Opal user, wants easier setup"` (1-line summary),
 `recent_deltas: ["prefers async demos", ...]` (last 3 learned, newest first).
+`agent: { state: "assigned", thread: "world:entity:person:<id>" }` (the wearer pinched this person: `world.entity_adopted`; the card shows an AGENT pill).
+
+Watches and entity agents (`perception/watches.py`):
+
+```json
+{ "kind": "memory_event", "text": "WATCH ARMED", "detail": "pricing · Matthew" }
+{ "kind": "memory_event", "text": "WATCH FIRED", "detail": "pricing · Matthew" }
+{ "kind": "memory_event", "text": "AGENT ASSIGNED", "detail": "MATTHEW" }
+{ "kind": "armed_watches", "items": [{ "id": "evt_...", "qm_id": "ww_..." | null, "topic": "pricing", "person_id": "matthew",
+    "person": "Matthew", "action": "prep a counter-offer", "once": true, "fired": 0, "state": "armed" }] }   // snapshot, replace
+```
+
+`WATCH FIRED` comes from QM's `/world-events` reply (`watches: [ids]`) or `POST :8787/hud {"kind":"watch_fired","watch_id":"ww_..."}`. Cards of a watched person get `watching: "pricing"` client-side (WATCHING row).
 
 Builder (feature_request.detected -> coding agent -> PR): same `agent_activity` shape, one worker named `Builder`, plus optional `job_id` on the message and `url` (Vercel preview) / `pr_url` on the worker once known. Notes go `queued: <feature>` -> `coding: <feature>` / `editing LandingPage.tsx` / `building` / `opening PR` -> `PR #N opened · building preview` -> done `PR #N · preview ready · <url>` (or failed `failed: <reason>`). Before coding, a recalled Memorable procedure shows as `{ "kind": "memory_event", "text": "RECALLED PROCEDURE", "detail": "<title> · <n> steps" }`.
 

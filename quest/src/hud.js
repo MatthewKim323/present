@@ -17,6 +17,7 @@ export class HudState {
     this.toasts = [];            // { text, detail, t }
     this.version = 0;            // bumps on any change (renderers re-rasterize)
     this.frameSize = [640, 480]; // last sent frame size, for pixel bboxes
+    this.watches = [];           // armed_watches items (spoken standing watches, QM WorldWatches)
   }
 
   touch() { this.version++; }
@@ -39,7 +40,11 @@ export class HudState {
     switch (msg.kind) {
       case 'person_card':
         if (msg.bbox) this._track(msg.anchor_track_id, msg.bbox, msg.name);
-        this.cards.set(key(msg.anchor_track_id), withDeltas(this, { ...msg, t: now() }));
+        this.cards.set(key(msg.anchor_track_id), withDeltas(this, { ...msg, watching: this._watching(msg.person_id), t: now() }));
+        break;
+      case 'armed_watches': // snapshot; re-clone cards so the WATCHING row re-rasterizes
+        this.watches = msg.items || [];
+        for (const [k, c] of this.cards) this.cards.set(k, { ...c, watching: this._watching(c.person_id) });
         break;
       case 'memory_event':
         this.toasts.push({ text: msg.text, detail: msg.detail, t: now() });
@@ -63,6 +68,12 @@ export class HudState {
         return;
     }
     this.touch();
+  }
+
+  _watching(pid) {
+    if (!pid) return null;
+    const topics = this.watches.filter((w) => w.person_id === pid).map((w) => w.topic || w.action).filter(Boolean);
+    return topics.length ? topics.join(', ') : null;
   }
 
   _track(id, bbox, label) {

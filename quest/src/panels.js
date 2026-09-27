@@ -44,7 +44,8 @@ function text(ctx, s, x, y, { size = 13, weight = 400, color = '#e8ecf0', font =
 // 1. Person card: name, role/company, last topic, owes you / you owe.
 export function drawPersonCard(m) {
   const w = 300;
-  const rows = [m.last && ['LAST', m.last], m.owes_you && ['OWES YOU', m.owes_you], m.you_owe && ['YOU OWE', m.you_owe]].filter(Boolean);
+  const rows = [m.last && ['LAST', m.last], m.owes_you && ['OWES YOU', m.owes_you], m.you_owe && ['YOU OWE', m.you_owe],
+    m.watching && ['WATCHING', m.watching]].filter(Boolean);
   const h = 58 + rows.length * 20 + 6;
   const { c, ctx } = panel(w, h);
   glass(ctx, w, h);
@@ -52,11 +53,20 @@ export function drawPersonCard(m) {
   ctx.beginPath();
   ctx.arc(18, 22, 3.5, 0, Math.PI * 2);
   ctx.fill();
-  text(ctx, (m.name || 'UNKNOWN').toUpperCase(), 30, 27, { size: 15, weight: 600, track: 2, max: w - 44 });
+  const pill = m.agent ? 58 : 0; // pinch-assigned entity agent (world.entity_adopted)
+  text(ctx, (m.name || 'UNKNOWN').toUpperCase(), 30, 27, { size: 15, weight: 600, track: 2, max: w - 44 - pill });
+  if (pill) {
+    ctx.beginPath();
+    ctx.roundRect(w - pill - 10, 13, pill, 18, 9);
+    ctx.strokeStyle = ACCENT;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    text(ctx, 'AGENT', w - pill + 3, 26, { size: 9.5, weight: 600, color: ACCENT, track: 1.4 });
+  }
   text(ctx, m.subtitle || '', 30, 45, { size: 12, color: 'rgba(232,236,240,0.62)', max: w - 44 });
   let y = 70;
   for (const [k, v] of rows) {
-    text(ctx, k, 16, y, { size: 9.5, weight: 600, color: k === 'YOU OWE' ? WARN : 'rgba(232,236,240,0.45)', track: 1.2 });
+    text(ctx, k, 16, y, { size: 9.5, weight: 600, color: k === 'YOU OWE' ? WARN : k === 'WATCHING' ? ACCENT : 'rgba(232,236,240,0.45)', track: 1.2 });
     text(ctx, v, 92, y, { size: 12, max: w - 106 });
     y += 20;
   }
