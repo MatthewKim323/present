@@ -96,6 +96,24 @@ BUILDER_AUTO=1 WORLD_WEARER_ID=stephen WORLD_WEARER_NAME=Stephen uv run python -
 uv run python -m perception.demo_inject --feature --via-llm   # Matthew asks Stephen for a How it works section on the Opal landing page
 ```
 
+## Watches and entity agents: reality creates them (`perception/watches.py`)
+
+Voice -> `world.watch_requested`. The wearer says a standing instruction out loud: "next time Matthew brings up pricing, prep a counter-offer", "remind me when he mentions the tournament", "keep an eye on this". A regex prefilter (`next time`, `whenever`, `every time`, `keep an eye`, `remind me when`, `watch for`, `let me know when`, ...) gates every utterance, so ordinary talk never costs a model call. Hits go to one `claude-haiku-4-5` call (`WORLD_WATCH_MODEL`, same client as the live pass) that returns `{is_watch, instruction, person_id, topic_terms, action, once}`: pronouns resolve to the person in frame, "next time we should grab lunch" is `is_watch: false`. Without an API key a deterministic parser covers the "next time X brings up Y, Z" shape.
+- Only the wearer arms watches: an explicit `other` tag or a clearly quieter voice (loudness heuristic, same as `intro.py`) is rejected before the model call. Unclear attribution is allowed.
+- The instruction was said to the AI, not the person, so it is dropped from the conversation buffer (otherwise extraction turns it into a commitment that fires the watch it just made).
+- QM turns the event into a WorldWatch (one model call on its side) and replies with the watch; QMSink hands that reply to `WatchBoard`, which keeps the QM id. Later events that match come back from QM with `watches: [ids]` -> HUD `WATCH FIRED`. `POST /hud {"kind":"watch_fired","watch_id"}` works too.
+- HUD: `memory_event WATCH ARMED · pricing · Matthew`, `armed_watches` snapshot (Quest shows a WATCHING row on that person's card), `WATCH FIRED · pricing · Matthew`.
+
+Pinch -> `world.entity_adopted`. The Quest sends `{kind:"gesture", type:"pinch", target_track_id}` (desktop: click a card or face box). On a recognized person the service emits `{entity_kind:"person", entity_id, label, track_id}` (debounced per person, `WORLD_PINCH_DEBOUNCE_S` 10s; unknown people are never adopted) -> QM gives them one persistent thread `world:entity:person:<id>`. HUD: `AGENT ASSIGNED · MATTHEW`, and every later `person_card` for them carries `agent: {state, thread}` (AGENT pill). The existing card refresh on pinch and the `label` / self-intro enrollment paths are unchanged.
+
+```bash
+curl -s localhost:8787/debug/utterance -H 'content-type: application/json' \
+  -d '{"text":"next time he brings up pricing, prep a counter-offer","speaker":"wearer","name":"Matthew","person_id":"matthew"}'
+curl -s localhost:8787/watches          # this run's watches (qm_id once QM confirms) + pinch-assigned agents
+```
+
+Verified live 2026-09-27 (worktree service on :8799 -> QM :8091): the utterance above -> haiku parse 3.8s -> QM `watch ww_8dfc6ccafa8b457d created via world: {"person_id":"matthew","text_contains":["pricing"]}` (spec via model) -> HUD `WATCH ARMED`, `armed_watches` gained the QM id; then a `conversation.completed` mentioning pricing -> QM claimed `world-watch:ww_8dfc6ccafa8b457d:<event>` -> HUD `WATCH FIRED · pricing · Matthew`, list emptied (once). `world.entity_adopted` with this payload is accepted by QM (202, idempotent adopt).
+
 ## Endpoints
 
 | | |
@@ -106,6 +124,7 @@ uv run python -m perception.demo_inject --feature --via-llm   # Matthew asks Ste
 | `POST /hud` | push a raw HUD message to every HUD client (QM's swarm tracker posts `agent_activity` here; it also feeds the merged `qm_swarm` panel, see `devfeed.py`) |
 | `GET /health` | status, enrolled people, live tracks, latency (detect, embed/face, frame, ASR, LLM) |
 | `POST /debug/utterance` | `{text, speaker?: wearer\|other, name?, person_id?}` |
+| `GET /watches` | spoken watches this run (armed / fired / rejected, with QM id) + pinch-assigned entity agents |
 | `POST /builder/dispatch` | `{event_id, spec, repo?, person_id?, anchor_track_id?}` -> start a Builder job (QM's Builder worker calls this) |
 | `GET /builder/jobs[/<id>]` | Builder job state, PR, preview URL, timings |
 | `POST /debug/end-conversation` | close the open encounter and run extraction now |
