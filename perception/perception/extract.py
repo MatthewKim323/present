@@ -20,6 +20,7 @@ LLM_TYPES = [
     "decision.detected",
     "commitment.detected",
     "customer_feedback.detected",
+    "feature_request.detected",
     "physical_bug.detected",
     "task.demonstrated",
 ]
@@ -43,6 +44,9 @@ EVENT_SCHEMA = {
         "sentiment": {"type": "string", "enum": ["neg", "pos", "mixed", ""]},
         "feedback": _S,
         "buying_signal": _S,
+        "request": _S,
+        "requested_by": _S,
+        "acceptance": {"type": "array", "items": _S},
         "device": _S,
         "symptom": _S,
         "repro": _S,
@@ -51,7 +55,7 @@ EVENT_SCHEMA = {
     },
     "required": [
         "type", "confidence", "project", "decision", "constraint", "decided_by", "actor", "recipient",
-        "commitment", "due", "product", "feature", "sentiment", "feedback", "buying_signal", "device",
+        "commitment", "due", "product", "feature", "sentiment", "feedback", "buying_signal", "request", "requested_by", "acceptance", "device",
         "symptom", "repro", "instruction", "target",
     ],
     "additionalProperties": False,
@@ -76,6 +80,7 @@ People:
 
 Emit zero or more events. Only emit what was actually said; empty is fine. Types:
 - customer_feedback.detected: the other person gives feedback on a product/feature. product, feature, sentiment (neg|pos|mixed), feedback (one crisp sentence, paraphrased), buying_signal ("" if none, e.g. "would roll out if onboarding were easier").
+- feature_request.detected: the other person asks for or suggests a CONCRETE product change that an engineer could build (e.g. "onboarding should show a progress checklist"). Emit it in addition to customer_feedback.detected when both apply. product, feature (short imperative title, max 8 words, e.g. "Add onboarding progress checklist"), request (one sentence describing the change as the customer put it, paraphrased), requested_by (display name of who asked), acceptance (1-4 short, visually checkable criteria, e.g. "Checklist shows 4 steps with done state"). Vague complaints with no concrete change are feedback only.
 - commitment.detected: someone promises to do something. actor and recipient are display names (e.g. "{wearer_name}", "{other_name}"), commitment is an imperative phrase ("Send updated onboarding demo"), due ("" if unstated).
 - decision.detected: a decision was made. decision, constraint ("" if none), decided_by (person_ids, use "{wearer_id}" and "{other_id}").
 - physical_bug.detected: a hardware/physical device bug. device, symptom, repro.
@@ -138,6 +143,14 @@ def parse_extraction(
             payload = {"product": _nz(g("product")), "feature": _nz(g("feature")), "sentiment": sentiment, "feedback": g("feedback")}
             if _nz(g("buying_signal")):
                 payload["buying_signal"] = g("buying_signal")
+        elif t == "feature_request.detected":
+            if not g("feature") and not g("request"):
+                continue
+            acc = [a.strip() for a in (raw.get("acceptance") or []) if isinstance(a, str) and a.strip()][:4]
+            payload = {"product": _nz(g("product")), "feature": g("feature") or g("request")[:60], "request": g("request") or g("feature"),
+                       "requested_by": g("requested_by") or enc.name or None}
+            if acc:
+                payload["acceptance"] = acc
         elif t == "commitment.detected":
             if not g("commitment"):
                 continue

@@ -112,3 +112,19 @@ def test_partner_change_closes_encounter():
     cm.add_utterance(Utterance(0.0, "a"), "alex", "Alex", 3)
     closed = cm.add_utterance(Utterance(1.0, "b"), "sam", "Sam", 4)
     assert [e.name for e in closed] == ["Alex"] and cm.current.name == "Sam"
+
+
+def test_parse_feature_request():
+    data = {"summary": "s", "project": "Syla", "events": [
+        ev(type="feature_request.detected", product="Syla", feature="Add onboarding progress checklist",
+           request="Show a checklist at the top of onboarding", requested_by="Matthew",
+           acceptance=["Checklist with 4 steps", " ", "Progress bar"]),
+        ev(type="feature_request.detected"),  # empty -> dropped
+    ]}
+    out = parse_extraction(data, alex_enc())
+    fr = [e for e in out if e["type"] == "feature_request.detected"]
+    assert len(fr) == 1
+    assert fr[0]["payload"] == {"product": "Syla", "feature": "Add onboarding progress checklist",
+                                "request": "Show a checklist at the top of onboarding", "requested_by": "Matthew",
+                                "acceptance": ["Checklist with 4 steps", "Progress bar"]}
+    assert fr[0]["project"] == "syla"

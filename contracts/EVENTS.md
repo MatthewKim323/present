@@ -42,6 +42,7 @@ QM  --traces-->  Memorable  (native QM integration)
 | `decision.detected` | `{ decision, constraint?, decided_by: [person_id] }` |
 | `commitment.detected` | `{ actor, recipient, commitment, due? }` |
 | `customer_feedback.detected` | `{ product, feature, sentiment: "neg"\|"pos"\|"mixed", feedback, buying_signal? }` |
+| `feature_request.detected` | `{ product, feature, request, requested_by, acceptance?: [string] }` (customer asks for / suggests a concrete product change; `feature` is a short imperative title, `request` one sentence, `acceptance` 1-4 visible checks. Triggers the Builder) |
 | `physical_bug.detected` | `{ device, symptom, repro }` |
 | `task.demonstrated` / `world.task_requested` | `{ instruction, target: "whiteboard"\|"object"\|..., snapshot_ref? }` |
 | `object.state_changed` / `object.last_seen` | `{ object, state?, location? }` |

@@ -13,6 +13,7 @@ EVENT_TYPES = {
     "decision.detected",
     "commitment.detected",
     "customer_feedback.detected",
+    "feature_request.detected",
     "physical_bug.detected",
     "task.demonstrated",
     "world.task_requested",

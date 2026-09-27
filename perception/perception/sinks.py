@@ -109,6 +109,7 @@ MEMORY_TEXT = {
     "decision.detected": "DECISION REMEMBERED",
     "commitment.detected": "COMMITMENT REMEMBERED",
     "customer_feedback.detected": "CUSTOMER FEEDBACK REMEMBERED",
+    "feature_request.detected": "FEATURE REQUEST REMEMBERED",
     "physical_bug.detected": "BUG REMEMBERED",
     "task.demonstrated": "TASK REMEMBERED",
     "world.task_requested": "TASK REQUESTED",
@@ -122,6 +123,8 @@ def memory_detail(event: dict[str, Any]) -> str:
     t = event["type"]
     if t == "customer_feedback.detected":
         return " ".join(x for x in (p.get("product"), p.get("feature")) if x) or (p.get("feedback") or "")[:48]
+    if t == "feature_request.detected":
+        return " · ".join(x for x in (p.get("product"), p.get("feature")) if x) or (p.get("request") or "")[:48]
     if t == "commitment.detected":
         return p.get("commitment") or ""
     if t == "decision.detected":
