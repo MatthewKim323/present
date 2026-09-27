@@ -2,6 +2,8 @@
 
 Hackathon build (YC, 2026-09-27). Dev rig: **Meta Quest 3S**.
 
+**New session? Read `docs/HANDOFF.md` first** (current state, blockers, never-touch-personal-gbrain rule).
+
 **Tagline:** Your AI shouldn't stop knowing you when you close your laptop.
 **Technical:** Reality as a first-class context source, trigger surface, and learning environment for agents.
 **Productivity thesis:** Humans shouldn't have to manually convert their lives into prompts.
