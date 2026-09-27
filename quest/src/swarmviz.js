@@ -103,7 +103,7 @@ function drawEventLabel(s) {
 }
 function drawGhost(s) {
   const f = `500 10px ${MONO}`;
-  const w = Math.ceil(Math.min(220, measure(s, f) + 14)), h = 17;
+  const w = Math.ceil(Math.min(290, measure(s, f) + 14)), h = 17;
   const [c, g] = mk(w, h);
   g.beginPath(); g.roundRect(0.5, 0.5, w - 1, h - 1, 5);
   g.fillStyle = 'rgba(8,10,14,0.55)'; g.fill();
@@ -221,6 +221,8 @@ export class SwarmSim {
       case 'memory_event': return this._memory(msg, now);
       case 'context_delta': return this._brainPulse(now, true);
       case 'person_card': if (this.cur) this._brainPulse(now, false); return;
+      case 'gbrain_op': return this._gbrainOp(msg, now);
+      case 'procedure': return this._procedure(msg, now);
       default:
     }
   }
@@ -258,7 +260,7 @@ export class SwarmSim {
       uid: ++this.uid, eventId: msg.event_id || null, jobId: msg.job_id || null, hook: msg.hook || 'world.event',
       feature: msg.feature || null, anchor: msg.anchor_track_id ?? null, t0: now,
       nodes: new Map(), edges: new Map(), particles: [], fliers: [], sats: [], rings: [], ghosts: [],
-      toolQ: [], nextTool: 0, recent: [], tails: {}, slot: now + 1.75, extra: 0,
+      toolQ: [], nextTool: 0, bghosts: [], recent: [], tails: {}, slot: now + 1.75, extra: 0,
       pr: null, prNote: null, prBase: 0, proc: null, procKey: null, card: null,
       recallLand: 0, completeAt: 0, lastAct: now, src: null, srcVer: 0,
     };
@@ -301,7 +303,7 @@ export class SwarmSim {
       s.slot = born + 0.28;
       n = this._node(s, id, 'worker', pos, born, { name: w.name || id });
       this._edge(s, 'qm', id, born - 0.05, 0.35);
-      if (id === 'context') this._gbrain(s, born + 0.45);
+      if (id === 'context') { const g = this._gbrain(s, born + 0.45); this._edge(s, 'context', 'gbrain', Math.max(g.bornAt, born + 0.4), 0.4, { bend: 0.1 }); }
     }
     const st = stateOf(w);
     if (st !== n.state) {
@@ -322,8 +324,70 @@ export class SwarmSim {
   _gbrain(s, at) {
     if (s.nodes.has('gbrain')) return s.nodes.get('gbrain');
     const g = this._node(s, 'gbrain', 'gbrain', LAYOUT.gbrain, at, { name: 'GBRAIN' });
-    this._edge(s, 'context', 'gbrain', at - 0.05, 0.4, { bend: 0.1 });
+    if (s.nodes.has('context')) this._edge(s, 'context', 'gbrain', at - 0.05, 0.4, { bend: 0.1 });
     return g;
+  }
+
+  // gbrain_op: every GBrain read/write becomes a comet. QM workers: reads fly brain -> worker, writes
+  // worker -> brain. perception / live ops fly between the person's head and the brain.
+  _gbrainOp(msg, now) {
+    const s = this.cur;
+    if (!s) return;
+    const g = this._gbrain(s, Math.max(now, s.t0 + 1.4));
+    const op = String(msg.op || 'op');
+    const write = /put|write|add|link|timeline|remember|capture|upsert|update|save|tag|delta/i.test(op);
+    const m = String(msg.actor || '').match(/^qm:(.+)$/i) || (msg._fromMem ? [null, 'memorable'] : null);
+    let other = 'src';
+    if (m) {
+      const id = m[1].toLowerCase().replace(/\s+/g, '_');
+      if (!s.nodes.has(id)) return;
+      other = id;
+    }
+    const n = s.nodes.get(other);
+    const t0 = Math.max(now, g.bornAt + 0.2, n ? n.bornAt + 0.2 : 0);
+    const dur = other === 'src' ? 1.0 : 0.7;
+    if (s.fliers.length < 16) {
+      s.fliers.push({ from: write ? other : 'gbrain', to: write ? 'gbrain' : other, t0, dur, small: true,
+        k: msg.ok === false ? K.bad : write ? K.accent : K.white, lift: other === 'src' ? 0.12 : 0.04 });
+    }
+    const hit = write ? t0 + dur : t0;
+    g.pulseAt = hit;
+    s.rings.push({ id: 'gbrain', t0: hit, k: msg.ok === false ? K.bad : K.accent });
+    const what = msg.slug ? ' ' + String(msg.slug).split('/').slice(-1)[0] : msg.query ? ` "${String(msg.query).slice(0, 18)}"` : '';
+    const meta = [msg.hits != null ? `${msg.hits} hit${msg.hits === 1 ? '' : 's'}` : '', msg.ms != null ? `${Math.round(msg.ms)}ms` : ''].filter(Boolean).join(' · ');
+    const who = m ? m[1] : msg.actor || '';
+    const text = `${who ? who + ' ' : ''}${op}${what}${meta ? ' · ' + meta : ''}`;
+    s.bghosts.push({ t0: hit, text, canvas: drawGhost(text), uid: `b${now}${Math.random()}` });
+    if (s.bghosts.length > 3) s.bghosts.shift();
+    s.lastAct = now;
+  }
+
+  // procedure: Memorable's lifecycle. recording = slow pulse wired to Builder, extracting = faster,
+  // learned = card forms + saved into GBrain, recalled = card flies into Builder, refused = red.
+  _procedure(msg, now) {
+    const phase = String(msg.phase || '');
+    const p = { title: msg.title || 'procedure', steps: msg.steps ?? 0 };
+    const s = this.cur;
+    if (phase === 'recalled') return this._recall(p, now);
+    if (!s) return;
+    if (phase === 'learned') {
+      this._learn(p, now);
+      const m = s.nodes.get('memorable');
+      if (m) m.mstate = 'learned';
+      if (msg.gbrain_slug) this._gbrainOp({ op: 'put_page', actor: 'memorable', slug: msg.gbrain_slug, _fromMem: true }, now + 0.9);
+      return;
+    }
+    const m = this._memorable(s, Math.max(now, s.t0 + 1.4));
+    m.mstate = phase;
+    if (phase === 'recording' || phase === 'extracting') {
+      const e = this._edge(s, 'builder', 'memorable', Math.max(now, m.bornAt), 0.45, { bend: 0.14 });
+      e.pulseUntil = now + (phase === 'recording' ? 40 : 8);
+    } else if (phase === 'refused') {
+      const e = s.edges.get('builder>memorable');
+      if (e) e.pulseUntil = 0;
+      s.rings.push({ id: 'memorable', t0: now, k: K.bad });
+    }
+    s.lastAct = now;
   }
 
   _session(msg, now) {
@@ -420,6 +484,7 @@ export class SwarmSim {
     const m = this._memorable(s, now);
     if (!this._setProc(s, p, 'learned', Math.max(now, m.bornAt) + 0.6)) return;
     m.lit = 1;
+    m.mstate = 'learned';
     // the Builder's trace streams into Memorable, which writes the procedure next to GBrain
     const e = this._edge(s, 'builder', 'memorable', now, 0.45, { bend: 0.14 });
     e.pulseUntil = now + 3;
@@ -555,7 +620,13 @@ export class SwarmSim {
           const pa = n.pulseAt ? t - n.pulseAt : 99;
           k = pa < 1.4 ? K.accent : K.dim; a = pa < 1.4 ? 1 : 0.8; size = 0.024 * (pa < 0.5 ? 1.3 - 0.6 * pa : 1); break;
         }
-        case 'memorable': k = n.lit ? K.accent : K.dim; a = n.lit ? 1 : 0.7; size = n.lit ? 0.028 : 0.022; break;
+        case 'memorable':
+          if (n.mstate === 'refused') { k = K.bad; a = 1; size = 0.024; }
+          else if (n.mstate === 'recording' || n.mstate === 'extracting') {
+            const br = 0.5 + 0.5 * Math.sin(t * (n.mstate === 'recording' ? 1.7 : 5.5));
+            k = K.accent; a = 0.45 + 0.5 * br; size = 0.022 * (1 + 0.18 * br);
+          } else { k = n.lit ? K.accent : K.dim; a = n.lit ? 1 : 0.7; size = n.lit ? 0.028 : 0.022; }
+          break;
         case 'pr': k = s.pr?.checks === 'fail' ? K.bad : s.pr?.checks === 'pending' ? K.warn : K.accent; size = 0.03; a = 1; break;
       }
       const [x, y, z] = n.pos;
@@ -586,7 +657,8 @@ export class SwarmSim {
         const uu = u - i * 0.022;
         if (uu < 0) continue;
         samplePts(f.pts, uu, tmp);
-        this.emit(tmp[0], tmp[1], tmp[2], i ? f.k : K.white, i ? 0.7 * (1 - i / 8) : 1, i ? 0.02 * (1 - i / 10) : 0.034, i ? 0 : 1);
+        const sc = f.small ? 0.55 : 1;
+        this.emit(tmp[0], tmp[1], tmp[2], i ? f.k : f.small ? f.k : K.white, i ? 0.7 * (1 - i / 8) : 1, (i ? 0.02 * (1 - i / 10) : 0.034) * sc, i ? 0 : 1);
       }
       if (f.land === 'recall' && u >= 1 && !f.landed) { f.landed = true; s.rings.push({ id: 'builder', t0: t, k: K.accent, big: true }); }
     }
@@ -620,6 +692,18 @@ export class SwarmSim {
       // a tiny rising log: newest at the bottom, older ones pushed up and fading
       const slot = s.ghosts.length - 1 - i;
       this.labels.push({ id: gh.uid, canvas: gh.canvas, x: b.pos[0] + 0.05, y: b.pos[1] + 0.006 + 0.012 * easeOut(u / 0.2) + slot * 0.03, z: b.pos[2] + 0.01, ax: 0, ay: 1, alpha: a * (slot ? 0.6 : 0.95) });
+    });
+
+    // GBrain op log beside the GBRAIN node
+    const g = s.nodes.get('gbrain');
+    s.bghosts = s.bghosts.filter((gh) => t - gh.t0 < 2.8);
+    if (g) s.bghosts.forEach((gh, i) => {
+      if (t < gh.t0) return;
+      const u = (t - gh.t0) / 2.8;
+      const a = u < 0.08 ? u / 0.08 : u > 0.6 ? (1 - u) / 0.4 : 1;
+      const slot = s.bghosts.length - 1 - i;
+      // under the GBRAIN label, newest on top, older ones pushed down
+      this.labels.push({ id: gh.uid, canvas: gh.canvas, x: g.pos[0] + 0.02, y: g.pos[1] - 0.105 - 0.008 * easeOut(u / 0.2) - slot * 0.03, z: g.pos[2] + 0.01, ax: 0.6, ay: 0, alpha: a * (slot ? 0.55 : 0.9) });
     });
 
     // procedure card materializes under Memorable
@@ -657,9 +741,11 @@ export class SwarmSim {
       }
       case 'gbrain': key = 'g'; draw = () => drawNodeLabel({ title: 'GBRAIN', sub: 'people · commitments' }); dy = -0.028; break;
       case 'memorable': {
-        const lit = !!n.lit;
-        key = `m${lit}`;
-        draw = () => drawNodeLabel({ title: 'MEMORABLE', sub: lit ? 'procedural memory' : null, tag: lit ? '●' : '', tagK: K.accent });
+        const lit = !!n.lit, ms = n.mstate || '';
+        const sub = ms === 'recording' ? 'recording trace' : ms === 'extracting' ? 'extracting procedure' : ms === 'refused' ? 'refused' : lit ? 'procedural memory' : null;
+        const tag = ms === 'recording' ? 'REC' : ms === 'extracting' ? '···' : ms === 'refused' ? '✗' : lit ? '●' : '';
+        key = `m${lit}|${ms}`;
+        draw = () => drawNodeLabel({ title: 'MEMORABLE', sub, tag, tagK: ms === 'refused' ? K.bad : ms === 'recording' ? K.warn : K.accent });
         ax = 0; ay = 0.5; dx = 0.03; dy = 0.004; break;
       }
       case 'pr': {
