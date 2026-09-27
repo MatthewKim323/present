@@ -86,10 +86,12 @@ export const SWARM_SCRIPT = [
   [44000, { kind: 'track', track_id: 3, bbox: [0.4, 0.16, 0.2, 0.64], label: 'MATTHEW' }],
 ];
 
-const SWARM_ONLY = typeof location !== 'undefined' && new URLSearchParams(location.search).get('mockseq') === 'swarm';
-const SWARM_T0 = DEMO_SCRIPT[DEMO_SCRIPT.length - 1][0] + 4000;
-if (SWARM_ONLY) DEMO_SCRIPT.length = 0;
-DEMO_SCRIPT.push(...SWARM_SCRIPT.map(([t, m]) => [(SWARM_ONLY ? 0 : SWARM_T0) + t, m]));
+// The default loop (DEV_SCRIPT) already plays !recap -> !streak as qm_swarm, which swarmviz renders too.
+// ?mock=1&mockseq=swarm swaps in this longer standalone take (more tool calls, step list on the card).
+if (typeof location !== 'undefined' && new URLSearchParams(location.search).get('mockseq') === 'swarm') {
+  DEMO_SCRIPT.length = 0;
+  DEMO_SCRIPT.push(...SWARM_SCRIPT);
+}
 
 export function runMock(apply, { loop = true } = {}) {
   const timers = [];

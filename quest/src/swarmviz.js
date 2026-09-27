@@ -244,8 +244,9 @@ export class SwarmSim {
     for (const w of msg.workers || []) this._worker(s, w, now);
     if (!s.feature) {
       const b = (msg.workers || []).find((w) => /builder/i.test(w.name || ''));
-      const m = b && String(b.note || '').match(/(?:queued|coding):\s*(.+)$/i);
-      if (m) s.feature = m[1].replace(/\s+command$/i, '');
+      const note = String(b?.note || '');
+      const m = note.match(/![\w-]+/) || note.match(/(?:queued|coding):\s*(.+)$/i);
+      if (m) s.feature = (m[1] || m[0]).replace(/\s+command$/i, '');
     }
     if (msg.recalled) this._recall({ ...msg.recalled }, now);
     if (msg.learned) this._learn({ ...msg.learned }, now);
@@ -312,6 +313,8 @@ export class SwarmSim {
     if (id === 'builder') {
       const m = n.note.match(/PR #(\d+)/);
       if (m) s.prNote = Number(m[1]);
+      if (w.pr) s.prNote = Number(w.pr);
+      if (s.prNote && !s.pr && this.lastGh) this._github(this.lastGh, now);
       if (w.tail) this._tail(s, 'q', w.tail, now);
     }
   }
@@ -357,7 +360,8 @@ export class SwarmSim {
     const s = this.cur;
     if (!s) return;
     const prs = msg.prs || [];
-    const pr = (s.prNote && prs.find((p) => p.number === s.prNote)) || prs[0];
+    // the Builder's own PR when it named one, else the newest PR opened after this swarm started
+    const pr = s.prNote ? prs.find((p) => p.number === s.prNote) : prs[0];
     if (!pr || (pr.number <= s.prBase && pr.number !== s.prNote)) return;
     s.pr = { number: pr.number, additions: pr.additions, deletions: pr.deletions, checks: pr.checks };
     if (!s.nodes.has('pr')) {
@@ -927,23 +931,24 @@ export class DesktopSwarm {
   }
 
   // Graph frame on screen: EVENT node origin, px per meter, slow yaw for parallax.
+  // Desktop has no depth, so the graph takes the free area under the person card (the GitHub and
+  // QM SWARM panels stack on the left of the person).
   _frame(s, vr) {
     const hud = this.hud;
-    let scale = Math.min(innerWidth * 0.52, innerHeight * 0.9, 640);
     const b = s.anchor != null ? hud.bboxFor(s.anchor) : [...hud.tracks.keys()].map((id) => hud.bboxFor(id)).find(Boolean);
-    let hx, hy, ox, oy;
+    let hx, hy, left, oy;
     if (b) {
       hx = vr.x + (b[0] + b[2] / 2) * vr.w; hy = vr.y + b[1] * vr.h;
-      ox = vr.x + b[0] * vr.w - 0.5 * scale - 24;
-      oy = hy + 290; // below the GitHub panel devpanels.js draws left of the person
+      left = vr.x + (b[0] + b[2]) * vr.w + 8;
+      oy = hy + 235;
     } else {
-      hx = innerWidth * 0.62; hy = innerHeight * 0.3;
-      ox = innerWidth * 0.36; oy = innerHeight * 0.3;
+      hx = innerWidth * 0.5; hy = innerHeight * 0.25;
+      left = innerWidth * 0.45; oy = innerHeight * 0.4;
     }
-    ox = Math.max(0.36 * scale + 80, Math.min(innerWidth - 0.5 * scale - 16, ox));
+    left = Math.min(left, innerWidth - 420);
     oy = Math.max(60, Math.min(innerHeight * 0.55, oy));
-    scale = Math.max(300, Math.min(scale, (innerHeight - oy - 30) / 0.66));
-    return { ox, oy, scale, hx, hy };
+    const scale = Math.max(300, Math.min(560, (innerWidth - left - 16) / 1.15, (innerHeight - oy - 30) / 0.66));
+    return { ox: left + 0.5 * scale, oy, scale, hx, hy };
   }
 
   _proj(x, y, z, F, t, out) {
