@@ -148,3 +148,35 @@ def test_approve_failure_toasts_reason():
     assert not asyncio.run(feed.handle_action({"action": "approve", "pr": 7}))["ok"]
     assert sent[-1]["text"] == "APPROVE FAILED" and "own pull request" in sent[-1]["detail"]
     feed.close()
+
+
+def test_actions_run_as_the_wearer_when_a_token_is_set(monkeypatch):
+    reader, actor = FakeGh(), FakeGh()
+    sent = []
+
+    async def bc(m):
+        sent.append(m)
+
+    b = Builder(BuilderConfig(), bc, runner=object(), github=object(), procedures=object())
+    feed = DevFeed(b, bc, repo="qtzx06/opal", gh=reader, actor_gh=actor)
+    asyncio.run(feed.poll_github())
+    assert asyncio.run(feed.handle_action({"action": "approve", "pr": 7}))["ok"]
+    assert [c[:2] for c in actor.calls] == [("pr", "review")]  # the wearer approves
+    assert not any(c[:2] == ("pr", "review") for c in reader.calls)  # the builder's account only reads
+    feed.close()
+
+
+def test_actor_gh_from_env_uses_token(monkeypatch):
+    from perception import devfeed
+    monkeypatch.delenv("DEVFEED_GH_TOKEN", raising=False)
+    assert devfeed.actor_gh_from_env() is None
+    monkeypatch.setenv("DEVFEED_GH_TOKEN", "ghp_test")
+    seen = {}
+
+    async def fake_sh(*args, env=None, timeout=0):
+        seen["token"] = env["GH_TOKEN"]
+        return 0, ""
+
+    monkeypatch.setattr(devfeed, "_sh", fake_sh)
+    asyncio.run(devfeed.actor_gh_from_env()("pr", "comment"))
+    assert seen["token"] == "ghp_test"

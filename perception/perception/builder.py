@@ -71,7 +71,7 @@ class BuilderConfig:
     memorable_key: str = ""
     procedures_dir: Path = DATA_DIR / "procedures"
     recall_min_score: float = 0.5
-    local_preview: bool = True  # serve the PR branch from the local checkout (vite preview) and screenshot it for the HUD
+    local_preview: bool = False  # serve the PR branch from the local checkout (vite preview) and screenshot it for the HUD
     preview_host: str = ""  # LAN address the headset can reach; auto-detected when empty
     preview_port: int = 4300
     chrome_bin: str = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -82,7 +82,7 @@ class BuilderConfig:
         mem = _load_env_file(Path(e("BUILDER_MEMORABLE_ENV", str(ROOT_DIR.parent / ".env.memorable"))))
         return cls(
             repo=e("BUILDER_REPO", cls.repo),
-            local_preview=e("BUILDER_LOCAL_PREVIEW", "1") in ("1", "true", "yes"),
+            local_preview=e("BUILDER_LOCAL_PREVIEW", "0") in ("1", "true", "yes"),
             preview_host=e("BUILDER_PREVIEW_HOST", ""),
             preview_port=int(e("BUILDER_PREVIEW_PORT", cls.preview_port)),
             chrome_bin=e("BUILDER_CHROME_BIN", cls.chrome_bin),

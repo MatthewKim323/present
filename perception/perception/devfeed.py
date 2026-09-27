@@ -38,6 +38,21 @@ async def gh_cli(*args: str) -> tuple[int, str]:
     return await _sh("gh", *args, timeout=30)
 
 
+def actor_gh_from_env() -> Gh | None:
+    """gh as the wearer (DEVFEED_GH_TOKEN, e.g. Stephen's `gh auth token`), so approve/comment come from him, not the
+    account whose builder opened the PR (GitHub refuses self-approval). None = use the laptop's own gh login."""
+    token = os.environ.get("DEVFEED_GH_TOKEN", "").strip()
+    if not token:
+        return None
+    env = {**os.environ, "GH_TOKEN": token}
+    env.pop("GITHUB_TOKEN", None)
+
+    async def gh(*args: str) -> tuple[int, str]:
+        return await _sh("gh", *args, env=env, timeout=30)
+
+    return gh
+
+
 def short_target(tool: str, inp: dict[str, Any]) -> str:
     """Tool input (already canonical + redacted by builder.canonical_input) -> a short HUD target."""
     for k in ("file_path", "path"):
@@ -102,11 +117,12 @@ def first_hunk(diff: str, max_lines: int = 8) -> tuple[str | None, list[dict[str
 
 class DevFeed:
     def __init__(self, builder: Builder, broadcast: Broadcast, *, repo: str | None = None, gh: Gh | None = None,
-                 active_poll_s: float = 5.0, idle_poll_s: float = 30.0, resend_s: float = 10.0) -> None:
+                 actor_gh: Gh | None = None, active_poll_s: float = 5.0, idle_poll_s: float = 30.0, resend_s: float = 10.0) -> None:
         self.builder = builder
         self.broadcast = broadcast
         self.repo = repo or os.environ.get("DEVFEED_REPO") or DEFAULT_REPO
         self.gh = gh or gh_cli
+        self.actor_gh = actor_gh or (actor_gh_from_env() if gh is None else None) or self.gh  # who approves/comments
         self.active_poll_s, self.idle_poll_s, self.resend_s = active_poll_s, idle_poll_s, resend_s
         self.all_prs = os.environ.get("DEVFEED_ALL_PRS", "0") in ("1", "true")  # demo: show non-[WORLD] PRs too
         self.tails: dict[str, deque] = {}
@@ -266,12 +282,12 @@ class DevFeed:
             await self._toast(f"{action.upper()} REFUSED", f"#{pr} · not an open WORLD PR")
             return {"ok": False, "error": "pr not listed"}
         if action == "approve":
-            code, out = await self.gh("pr", "review", str(pr), "-R", self.repo, "--approve",
+            code, out = await self.actor_gh("pr", "review", str(pr), "-R", self.repo, "--approve",
                                       "--body", "Approved in person from the WORLD HUD.")
             ok_text, bad_text = "PR APPROVED", "APPROVE FAILED"
         else:
             text = " ".join(str(msg.get("text") or "").split())[:500] or CANNED_COMMENT
-            code, out = await self.gh("pr", "comment", str(pr), "-R", self.repo, "--body", text)
+            code, out = await self.actor_gh("pr", "comment", str(pr), "-R", self.repo, "--body", text)
             ok_text, bad_text = "COMMENT POSTED", "COMMENT FAILED"
         log.info("dev_action %s #%s -> %s %s", action, pr, code, out.strip()[-160:])
         if code == 0:
