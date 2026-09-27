@@ -123,6 +123,20 @@ is handled client-side (desktop: overlay iframe + link; XR: opened when the sess
 the service. The result comes back as a `memory_event` toast (`PR APPROVED` / `COMMENT POSTED` /
 `APPROVE FAILED`, detail `#7 · <reason>`).
 
+Preview screenshot (sent once the Builder's PR is done and the world service has served the branch locally):
+
+```json
+{ "kind": "preview_shot", "job_id": "b451461", "pr": 5, "title": "[WORLD] Add How it works section under hero",
+  "url": "http://192.168.x.x:4301/", "jpeg_b64": "...", "w": 1280, "h": 1600 }
+```
+
+`jpeg_b64` is a top-of-page screenshot of the running preview, full page width, may be tall (the Quest crops a
+16:10 window and scrolls it). Live pages can't render inside immersive-ar, so this is how the preview reaches the
+wearer: XR pops it ~0.9 m in front of the head (world-locked after), desktop shows it as a centered overlay. It
+auto-scrolls once toward ~40% of the page; pinch/click scrolls a step, pinch-hold / X / Esc dismisses, OPEN does
+the same thing as `open_preview`. Re-sending with the same `job_id` + `pr` swaps the image in place; a new pair pops
+a fresh panel. Keep it well under the ws frame limit (JPEG q~0.8, <= ~600 KB).
+
 Debug: `/ws/quest?debug=1` also streams `{ "kind": "tracks", "tracks": [{ "track_id", "bbox", "person_id", "label" }] }` for anchoring.
 
 ## Quest -> world service (over /ws/quest)

@@ -148,7 +148,7 @@ $('btn-label').onclick = () => {
 // ?emulate=1: Meta's IWER polyfills navigator.xr as a Quest 3, so the XR path can
 // be exercised in a desktop browser (no passthrough, but layout + pinch logic run).
 const emulated = config.emulate
-  ? import('iwer').then(({ XRDevice, metaQuest3 }) => { new XRDevice(metaQuest3).installRuntime({ forceInstall: true }); log('iwer: emulating Quest 3'); })
+  ? import('iwer').then(({ XRDevice, metaQuest3 }) => { (window.__iwer = new XRDevice(metaQuest3)).installRuntime({ forceInstall: true }); log('iwer: emulating Quest 3'); })
   : Promise.resolve();
 
 emulated.then(() => XrHud.supported()).then((ok) => {

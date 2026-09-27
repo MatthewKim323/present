@@ -68,7 +68,9 @@ frame) or normalized 0..1.
 Dev cockpit (`src/devpanels.js`): also receives `dev_github`, `dev_session` and
 `context_delta`. GitHub panel sits left of the person, Claude Code panel right of
 the card (body-locked in XR, not head-locked); `context_delta` lines fade in under
-the card. Pinching APPROVE / OPEN PREVIEW / COMMENT sends `dev_action`. Hooks in
+the card. `preview_shot` (screenshot of the Builder's branch, served
+locally) pops in ~0.9 m in front of the wearer, world-locked; pinch scrolls, pinch-hold
+closes, OPEN = open preview. Pinching APPROVE / OPEN PREVIEW / COMMENT sends `dev_action`. Hooks in
 the other files are one-liners (grep `devpanels`); `?mock=1` plays it too.
 
 ## Run it (desktop, no headset)
