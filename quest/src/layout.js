@@ -57,7 +57,7 @@ export const TOAST_MAX = 1;                      // toasts on screen at once (on
 // ---------------------------------------------------------------- XR (meters, person frame)
 
 export const XR = {
-  panel: FULL ? 1 : 0.88,          // scale on every side panel (card stays 1: person first)
+  panel: FULL ? 1.4 : 1.23,        // scale on every side panel (card stays 1: person first); ~1.4x so rails read at 1.0 m
   gap: 0.04,                       // between panels in a column
   colGap: 0.06,                    // between columns
   faceHalfMin: 0.09,               // half face width when no bbox (m)
