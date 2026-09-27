@@ -599,7 +599,7 @@ export const VISION_SCRIPT = [
   [VISION_LEAD + 900, rv(MOCK_DIMS(0.28, 0.1, 0.17, 0.25, 0.5, 1), 1, null)],
   [VISION_LEAD + 2300, rv(MOCK_DIMS(0.28, 0.2, 0.17, 0.25, 0.5, 1), 2, 'wants payouts explained up front')],
   [VISION_LEAD + 3700, rv(MOCK_DIMS(0.28, 0.3, 0.33, 0.25, 0.22, 1), 3, 'found the landing page confusing')],
-  [VISION_LEAD + 7300, rv(MOCK_DIMS(0.28, 0.3, 0.5, 0.5, 0.5, 1), 3, 'send him the preview link')],
+  [VISION_LEAD + 7300, rv(MOCK_DIMS(0.28, 0.3, 0.5, 0.5, 0.5, 1), 3, 'send him the PR when it lands')],
   [VISION_LEAD + 12000, rv(MOCK_DIMS(0.28, 0.4, 0.67, 0.5, 0.8, 1), 4, 'excited about the preview')],
 ];
 
