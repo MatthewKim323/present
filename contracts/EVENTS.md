@@ -149,7 +149,8 @@ memory. One message per phase of a harness run:
   "trigger": "ship customer feature request: Add !recap command",
   "gbrain_slug": "procedures/add-discord-command",   // learned/recalled: where GBrain mirrored it (null on the stub)
   "admitted": true, "reason": "no_postcondition",    // refused: Memorable's judge reason, verbatim
-  "tool_calls_seen": 7 }                              // recording: running count of captured tool calls
+  "tool_calls_seen": 7,                               // recording: running count of captured tool calls
+  "metrics": { "tool_calls": 14, "turns": 9, "seconds": 63 } }  // learned: measured numbers of the source run (only real values; seconds_to_pr from the Builder)
 ```
 
 Builder (`claude-code`): `recalled` (before the coder starts, steps injected into its prompt) -> `recording` when the

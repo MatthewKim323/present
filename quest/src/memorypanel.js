@@ -353,15 +353,28 @@ function cardLayout(card) {
   const steps = (card.steps || []).slice(0, MAX_STEPS);
   const total = card.steps_total || (card.steps || []).length;
   const more = Math.max(0, total - steps.length);
-  const top = card.trigger ? 80 : 64;
+  const mline = metricLine(card);
+  const top = (card.trigger ? 80 : 64) + (mline ? 16 : 0);
   const h = top + steps.length * 19 + (more ? 16 : 0) + 38;
-  return { steps, more, top, h };
+  return { steps, more, top, h, mline };
+}
+
+// Measured numbers from the run it was learned from (only what the server sent; never estimated here).
+function metricLine(card) {
+  const m = card.mode === 'learned' && card.metrics;
+  if (!m) return null;
+  const parts = [];
+  if (m.tool_calls != null) parts.push(`${m.tool_calls} tool calls`);
+  if (m.turns != null) parts.push(`${m.turns} turns`);
+  const secs = m.seconds ?? m.seconds_to_pr;
+  if (secs != null) parts.push(`${Math.round(secs)}s${m.seconds == null ? ' to PR' : ''}`);
+  return parts.length ? parts.join(' · ') : null;
 }
 
 // Learned / recalled procedure card. Steps animate: learned materializes them one by one,
 // recalled sweeps a highlight down them as they are injected into the Builder.
 export function drawCard(card, t = now()) {
-  const { steps, more, top, h } = cardLayout(card);
+  const { steps, more, top, h, mline } = cardLayout(card);
   const { c, ctx } = panel(W, h);
   const age = t - card.t0;
   const recalled = card.mode === 'recalled';
@@ -383,6 +396,11 @@ export function drawCard(card, t = now()) {
   if (card.trigger) {
     const ww = text(ctx, 'WHEN', 16, 63, { size: 8.5, weight: 600, color: DIM, track: 1.2 });
     text(ctx, card.trigger, 16 + ww + 8, 63, { size: 10.5, color: MID, max: W - 40 - ww });
+  }
+  if (mline) {
+    const my = card.trigger ? 79 : 63;
+    const ww = text(ctx, 'FIRST RUN', 16, my, { size: 8.5, weight: 600, color: DIM, track: 1.2 });
+    text(ctx, mline, 16 + ww + 8, my, { size: 10, font: MONO, color: MID, max: W - 40 - ww });
   }
   ctx.strokeStyle = 'rgba(255,255,255,0.08)';
   ctx.beginPath(); ctx.moveTo(16, top - 8); ctx.lineTo(W - 16, top - 8); ctx.stroke();
@@ -457,23 +475,18 @@ export function drawCard(card, t = now()) {
   return c;
 }
 
-// Honest refusal: Memorable looked at the run and did not learn from it.
+// Honest refusal: Memorable looked at the run and did not learn from it. Reason verbatim + a gloss.
 export function drawRefused(m) {
-  const probe = panel(1, 1).ctx;
   const reason = String(m.reason || 'not admitted');
   const gloss = REASONS[reason] || '';
-  probe.font = `600 9.5px ${FONT}`;
-  const head = 'MEMORABLE · NOT LEARNED';
-  const hw = probe.measureText(head).width + head.length * 1.3;
-  probe.font = `400 10.5px ${MONO}`;
-  const rw = probe.measureText(reason).width;
-  const w = W, h = gloss ? 48 : 34;
-  const { c, ctx } = panel(w, h);
-  glass(ctx, 0, 0, w, h, 13, 'rgba(8, 10, 14, 0.66)', 'rgba(255,184,107,0.3)');
+  const h = 50;
+  const { c, ctx } = panel(W, h);
+  glass(ctx, 0, 0, W, h, 13, 'rgba(8, 10, 14, 0.66)', 'rgba(255,184,107,0.3)');
   loopGlyph(ctx, 21, 16.5, 4.6, WARN);
-  text(ctx, head, 34, 21, { size: 9.5, weight: 600, color: WARN, track: 1.3 });
-  text(ctx, reason, Math.min(W - 16, 44 + hw + rw), 21, { size: 10.5, font: MONO, color: INK, align: 'right', max: W - 60 - hw });
-  if (gloss) text(ctx, `${gloss}${m.title ? ` · ${m.title}` : ''}`, 34, 38, { size: 10, color: DIM, max: W - 50 });
+  const hw = text(ctx, 'MEMORABLE · NOT LEARNED', 34, 21, { size: 9.5, weight: 600, color: WARN, track: 1.3 });
+  if (m.title) text(ctx, m.title, W - 16, 21, { size: 10, color: DIM, align: 'right', max: W - 60 - hw });
+  const rw = text(ctx, reason, 34, 39, { size: 10.5, font: MONO, color: INK, max: W - 50 });
+  if (gloss) text(ctx, `· ${gloss}`, 40 + rw, 39, { size: 10, color: DIM, max: W - 56 - rw });
   return c;
 }
 
@@ -540,7 +553,7 @@ export function drawMemoryStack(hud, t = now()) {
 
 // ---------------------------------------------------------------- desktop
 
-// Draws under the QM SWARM panel (devpanels.js DesktopDev.ssRect), else top right.
+// Draws under the QM SWARM panel (devpanels.js DesktopDev.ssRect), else bottom right.
 export class DesktopMemory {
   constructor(hud, dev) {
     this.hud = hud;
@@ -568,7 +581,7 @@ export class DesktopMemory {
       const gk = Math.min(1, (ss.x - 16) / W, (innerHeight - 104) / h);
       if (k < 0.78 && gk > k) { k = gk; x = 8; y = innerHeight - 8 - h * k; }
       k = Math.max(k, 0.6);
-    } else { x = innerWidth - W - 24; y = 80; }
+    } else { x = innerWidth - W - 24; y = innerHeight - h - 24; } // no swarm panel: bottom right (top right holds free agent_activity)
     x = Math.max(8, Math.min(innerWidth - W * k - 8, x));
     y = Math.max(8, Math.min(innerHeight - h * k - 8, y));
     ctx.drawImage(c, x, y, w * k, h * k);

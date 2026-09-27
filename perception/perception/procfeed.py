@@ -86,6 +86,14 @@ def procedure_msg(phase: str, source: str, *, doc: dict[str, Any] | None = None,
     return {k: v for k, v in m.items() if v is not None}
 
 
+def clean_metrics(m: Any) -> dict[str, Any] | None:
+    """Measured numbers of the run a procedure was learned from (tool_calls, turns, seconds). Only real values pass."""
+    if not isinstance(m, dict):
+        return None
+    out = {k: m[k] for k in ("tool_calls", "turns", "seconds", "seconds_to_pr") if isinstance(m.get(k), (int, float))}
+    return out or None
+
+
 def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -236,7 +244,8 @@ class ProcFeed:
         src = source_of(origin)
         msg = procedure_msg(phase, src, doc=draft, event_id=origin.get("event_id"), job_id=origin.get("job_id"),
                             gbrain_slug=gbrain_slug, admitted=True if phase == "learned" else None,
-                            reason=origin.get("reason") if phase == "refused" else None)
+                            reason=origin.get("reason") if phase == "refused" else None,
+                            metrics=clean_metrics(origin.get("metrics")) if phase == "learned" else None)
         await self._send(msg)
         title = draft.get("title")
         if title and phase == "learned":

@@ -849,10 +849,11 @@ class Builder:
                 log.info("builder %s memorable: %s", job.id, {k: v for k, v in job.procedure.items() if k != "doc"})
                 doc = job.procedure.pop("doc", None)
                 if job.procedure.get("stored") and doc:
-                    slug = await self._notify_procedure("learned", doc, job, {
-                        "tool_calls": job.stats.get("tool_calls"), "turns": job.stats.get("num_turns"),
-                        "seconds_to_pr": job.timings.get("pr_opened"), "seconds_to_preview": job.timings.get("preview_ready")})
-                    await self._proc("learned", job, doc=doc, gbrain_slug=slug, admitted=True)
+                    metrics = {"tool_calls": job.stats.get("tool_calls"), "turns": job.stats.get("num_turns"),
+                               "seconds_to_pr": job.timings.get("pr_opened"), "seconds_to_preview": job.timings.get("preview_ready")}
+                    slug = await self._notify_procedure("learned", doc, job, metrics)
+                    from .procfeed import clean_metrics  # noqa: PLC0415 (procfeed imports this module)
+                    await self._proc("learned", job, doc=doc, gbrain_slug=slug, admitted=True, metrics=clean_metrics(metrics))
                 elif job.procedure.get("reason") != "memorable not configured":
                     await self._proc("refused", job, admitted=False, reason=job.procedure.get("reason"))
             except Exception as e:  # noqa: BLE001

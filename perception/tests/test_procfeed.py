@@ -91,6 +91,7 @@ async def test_builder_run_records_extracts_learns(tmp_path, monkeypatch):
     assert [s["action"] for s in learned["steps"]] == ["Read", "Edit", "Bash", "Bash"]
     assert learned["steps"][3]["target"].startswith("gh pr create") and "\n" not in learned["steps"][3]["target"]
     assert learned["trigger"] == DRAFT["task"]
+    assert learned["metrics"] == {"tool_calls": 3, "turns": 5, "seconds_to_pr": learned["metrics"]["seconds_to_pr"]}
     assert calls == [("learned", "add discord command", "claude-code")]
     lib = [m for m in sent if m["kind"] == "procedure_library"][-1]
     assert lib["items"][0]["title"] == "add discord command" and lib["items"][0]["gbrain_slug"] == "procedures/add-discord-command"
@@ -157,11 +158,13 @@ def test_service_routes_qm_procedures(tmp_path):
     with TestClient(app) as c, c.websocket_connect("/ws/hud") as hud:
         first = hud.receive_json()
         assert first["kind"] == "procedure_library" and [i["title"] for i in first["items"]] == ["add discord command"]
-        r = c.post("/procedures", json={"kind": "learned", "draft": qm_draft, "origin": {"harness": "qm", "event_id": "evt_9"}})
+        r = c.post("/procedures", json={"kind": "learned", "draft": qm_draft, "origin": {"harness": "qm-swarm", "event_id": "evt_9",
+                                                                              "metrics": {"tool_calls": 14, "turns": 9, "seconds": 63, "x": "no"}}})
         assert r.status_code == 200
         msg = hud.receive_json()
         assert msg["kind"] == "procedure" and msg["phase"] == "learned" and msg["source"] == "qm-swarm"
         assert msg["event_id"] == "evt_9" and msg["steps"][0]["activity_class"] == "search" and msg["admitted"] is True
+        assert msg["metrics"] == {"tool_calls": 14, "turns": 9, "seconds": 63}
         lib = hud.receive_json()
         assert lib["kind"] == "procedure_library" and lib["items"][0]["title"] == "triage customer feedback"
         c.post("/procedures", json={"kind": "recalled", "draft": {"title": "add discord command"}, "origin": {"harness": "qm"}})
