@@ -80,6 +80,8 @@ export class XrHud {
       if (b) {
         // right of the person's head
         m.target = this._rayPoint(head, headQ, b[0] + b[2] + 0.02, b[1] + 0.12 * b[3], this.config.cardDistance);
+        // the ray hits the face's right edge; shift by half the card so it sits beside the face, not over it
+        m.target.add(new THREE.Vector3(m.mesh.geometry.parameters.width / 2, 0, 0).applyQuaternion(headQ));
       } else if (!m.placed) {
         m.target = this._local(head, headQ, 0.32, 0.05 - 0.22 * freeIdx++, -this.config.cardDistance);
       }

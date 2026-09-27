@@ -154,6 +154,11 @@ class IntroEnroller:
         t = self.target_track()
         if t is None:
             return {"action": "no_target", "name": name, "why": why}
+        store = getattr(self.vision, "store", None)
+        if store is not None and store.match_name(name):
+            # someone unrecognized claims an enrolled name: never merge a stranger's face into that person
+            log.info("intro: %s is already enrolled; not learning track %s from a spoken name", name, t.track_id)
+            return {"action": "name_taken", "name": name, "track_id": t.track_id, "why": why}
         self.vision.request_label(t.track_id, name, fresh=True, samples=self.samples)
         self.started.append((t.track_id, name))
         log.info("intro: learning track %s as %s (%s)", t.track_id, name, why)

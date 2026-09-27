@@ -230,3 +230,19 @@ def test_relationship_vector_from_stub():
     assert dims["recency"] == 1.0 and dims["warmth"] > 0.5 and dims["open loops"] > 0 and dims["familiarity"] > 0
     assert all(0 <= d["value"] <= 1 for d in last["dims"]) and last["facts_count"] == 1
     assert dims["knowledge"] > out[0]["dims"][1]["value"]
+
+
+def test_stranger_claiming_an_enrolled_name_is_not_merged(rng, tmp_path):
+    store, eng, v = _setup(rng, tmp_path)  # Stephen is enrolled
+    frame = np.full((480, 640, 3), 90, np.uint8)
+    center = rng.standard_normal(128)
+    for i in range(5):
+        _frame_with(eng, center, rng, i)
+        v.process(frame, float(i))
+    before = len(store.people["stephen"].embeddings)
+    act = IntroEnroller(v, "Wearer", "wearer").on_utterance(Utterance(6.0, "hi I'm Stephen", -38, speaker="other person"))
+    assert act["action"] == "name_taken"
+    for i in range(6, 20):
+        _frame_with(eng, center, rng, i)
+        v.process(frame, float(i))
+    assert len(store.people["stephen"].embeddings) == before
