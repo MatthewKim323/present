@@ -75,9 +75,9 @@ Subtle, not giant holograms. Don't burn 70% of time on visuals.
 
 ## Unverified claims (from pitch research, check against real docs before relying)
 
-- QM: persistent scopes, durable computers, crons/watches/webhooks, swarm API with roles + recursive spawn, Codex/Claude Code harness support.
-- Memorable: native GBrain + QM integrations, trace -> procedure extraction, recall injection into QM turns.
-- GBrain: scheduled skills over person history.
+- QM: crons/watches/webhooks, swarm API with roles + recursive spawn. (VERIFIED 2026-09-27: MIT license at github.com/yc-software/qm; per-scope durable computer and four agent loops Pi/Codex/OpenCode/Claude Code per memorable.sh/doc/qm; scope-aware `MEMORY_PROVIDER_CONFIG` router in docs/memory-providers.md. See docs/SPONSORS.md.)
+- Memorable: VERIFIED 2026-09-27. Native GBrain + QM integrations exist; trace -> procedure extraction is deterministic and model-free (`POST /v1/extract`); QM recall is injected every turn via `memorable inject` (15s timeout, fails open). QM route is now a `type: "memorable"` memory provider (upstream QM main), not the `MEMORABLE=1` flag the Memorable site still shows. gbrain relay needs upstream gbrain, not matt's local 0.32.5. 19% = fewer turns on gbrain/Claude Code; QM number is 40% fewer tool calls. Details + checklist in docs/SPONSORS.md.
+- GBrain: scheduled skills over person history. (Still unverified. Hosted gbrain.io is $199/mo per workspace, no free tier listed.)
 
 ## Pitch close
 
