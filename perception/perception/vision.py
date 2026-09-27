@@ -6,6 +6,7 @@ one frame at a time (latest frame wins).
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -74,6 +75,10 @@ class VisionPipeline:
         assert self.engine is not None
         t0 = time.perf_counter()
         faces = self.engine.detect(frame)
+        # crowded rooms: only people you're actually talking to (face height >= WORLD_MIN_FACE of the frame)
+        min_h = float(os.environ.get("WORLD_MIN_FACE", "0") or 0) * frame.shape[0]
+        if min_h > 0:
+            faces = [f for f in faces if f.bbox[3] >= min_h]
         res.detect_ms = (time.perf_counter() - t0) * 1000
         assigned, expired = self.tracker.update([f.bbox for f in faces], ts)
         self._apply_labels(res)
