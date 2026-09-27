@@ -5,11 +5,12 @@
     uv run python scripts/seed_gbrain.py --dry-run  # show what would happen
 
 Slug = path under seed/ without .md (seed/people/matthew.md -> people/matthew).
---reset soft-deletes every page whose frontmatter has created_by: world (signal pages, auto-created
-people/projects, relationship pages), then re-puts the seeds, so every take starts identical.
+--reset soft-deletes every page whose frontmatter has created_by: world or seed: world-demo (signal pages,
+auto-created people/projects, relationship pages, Memorable procedures/), then re-puts the seeds, so every
+take starts identical. --reset --dry-run lists what would be deleted and what is kept, with counts.
 Timeline rows cannot be deleted through MCP, so --reset stamps reset_at on relationship seeds and
 the sink ignores older "seen by" rows for seen_before. Pages without created_by: world
-(e.g. the workspace member page) are never touched.
+or seed: world-demo (e.g. the workspace member page) are never touched, whatever their prefix.
 """
 from __future__ import annotations
 
@@ -25,7 +26,14 @@ from perception.gbrain import MCPClient, NotFound  # noqa: E402
 from perception.gbrain_auth import ENV_PATH, MCP_URL, TokenProvider, read_env_file  # noqa: E402
 
 SEED_DIR = Path(__file__).resolve().parents[2] / "seed"
-DEMO_PREFIXES = ("feedback/", "commitments/", "decisions/", "feature-requests/", "bugs/", "relationships/", "people/", "projects/", "events/")
+DEMO_PREFIXES = ("feedback/", "commitments/", "decisions/", "feature-requests/", "bugs/", "relationships/", "people/",
+                 "projects/", "events/", "procedures/")
+
+
+def world_owned(frontmatter: dict | None) -> bool:
+    """The one reset safety rule: only pages WORLD wrote (created_by: world) or seeded (seed: world-demo)."""
+    fm = frontmatter or {}
+    return fm.get("created_by") == "world" or fm.get("seed") == "world-demo"
 
 
 def load_seeds(seed_dir: Path = SEED_DIR) -> dict[str, str]:
@@ -51,22 +59,35 @@ async def list_all(mcp) -> list[dict]:
         offset += 100
 
 
-async def reset(mcp, dry: bool) -> list[str]:
-    deleted = []
+async def plan_reset(mcp) -> tuple[list[str], list[str]]:
+    """(delete, keep): every listed page lands in exactly one. Nothing is deleted here."""
+    delete, keep = [], []
     for row in await list_all(mcp):
         slug = row.get("slug") or ""
         if not slug.startswith(DEMO_PREFIXES):
+            keep.append(slug)
             continue
         try:
             page = await mcp.call("get_page", {"slug": slug})
         except NotFound:
             continue
-        if (page.get("frontmatter") or {}).get("created_by") != "world":
-            continue
-        deleted.append(slug)
+        (delete if world_owned(page.get("frontmatter") if isinstance(page, dict) else None) else keep).append(slug)
+    return delete, keep
+
+
+async def reset(mcp, dry: bool) -> list[str]:
+    delete, keep = await plan_reset(mcp)
+    by_dir: dict[str, int] = {}
+    for slug in delete:
+        by_dir[slug.split("/", 1)[0]] = by_dir.get(slug.split("/", 1)[0], 0) + 1
+        print(f"  {'would delete' if dry else 'delete'} {slug}")
         if not dry:
             await mcp.call("delete_page", {"slug": slug})
-    return deleted
+    for slug in keep:
+        print(f"  keep {slug} (not WORLD-owned)")
+    print(f"{'would delete' if dry else 'deleted'} {len(delete)} WORLD pages "
+          f"({', '.join(f'{k}: {v}' for k, v in sorted(by_dir.items())) or 'none'}), kept {len(keep)}")
+    return delete
 
 
 async def main() -> None:
@@ -79,8 +100,7 @@ async def main() -> None:
     mcp = MCPClient(read_env_file(env).get("GBRAIN_URL") or MCP_URL, TokenProvider(env))
     seeds = load_seeds()
     if a.reset:
-        gone = await reset(mcp, a.dry_run)
-        print(f"{'would delete' if a.dry_run else 'deleted'} {len(gone)} WORLD pages: {gone}")
+        await reset(mcp, a.dry_run)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     for slug, content in seeds.items():
         if a.reset and slug.startswith("relationships/"):

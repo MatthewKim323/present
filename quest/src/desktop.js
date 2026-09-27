@@ -1,6 +1,10 @@
 import { deltasAnimating, DesktopDev } from "./devpanels.js";
 import { drawActionPerson as drawPersonCard } from './person-actions.js';
 import { DesktopVision } from "./visionfx.js";
+import { DesktopSwarm } from './swarmviz.js';
+import { DesktopBrain } from './brainpanel.js';
+import { DesktopMemory } from './memorypanel.js';
+import { safe, frameBegin, frameEnd } from './perf.js';
 // Desktop is a spatial preview: labels stay beside people; detail is intentional.
 import {
   drawPersonLabel,
@@ -21,6 +25,9 @@ export class DesktopHud {
     this.running = false;
     this.dev = new DesktopDev(hud);
     this.vfx = new DesktopVision(hud); // perception overlay (visionfx.js)
+    this.swarm = new DesktopSwarm(hud);
+    this.brain = new DesktopBrain(hud);
+    this.mem = new DesktopMemory(hud, this.dev);
     this.pointer = { x: -1, y: -1 };
     document.fonts?.ready.then(() => this.cache.clear());
     window.addEventListener("resize", () => this._resize());
@@ -64,8 +71,10 @@ export class DesktopHud {
     this.running = true;
     const loop = () => {
       if (!this.running) return;
-      this.draw();
       this.frame = requestAnimationFrame(loop);
+      const t0 = frameBegin();
+      safe('desktop draw', () => this.draw());
+      frameEnd(t0);
     };
     this.frame = requestAnimationFrame(loop);
   }
@@ -282,8 +291,11 @@ export class DesktopHud {
       if (hud.view === "person" && selected != null) placed.set(selected, detailRect);
     }
 
-    this.dev.draw(ctx, placed, vr);
-    this.vfx.draw(ctx, placed, vr, this.hits);
+    safe('desktop swarm', () => this.swarm.draw(ctx, vr));
+    safe('desktop dev', () => this.dev.draw(ctx, placed, vr));
+    safe('desktop brain', () => this.brain.draw(ctx, placed, vr));
+    safe('desktop memory', () => this.mem.draw(ctx));
+    safe('desktop vision', () => this.vfx.draw(ctx, placed, vr, this.hits));
 
     // One quiet acknowledgement at a time; older events remain in Memories.
     const toast = hud.liveToasts().at(-1);

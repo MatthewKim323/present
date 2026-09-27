@@ -166,6 +166,17 @@ often isolates; use the cable or a phone hotspot).
 `scrcpy --crop 1832:1920:0:0 --max-fps 30` mirrors the left eye to the laptop
 (crop numbers vary by device, drop `--crop` to see both eyes).
 
+## Headset diagnostics and performance
+
+- `?diag=1` shows browser capabilities, granted XR features, camera and mic labels, WebSocket status and RTT, GPU limits, and `/health` in the control panel.
+- `?perf=1` shows frame timing, draw calls, and texture count in AR and desktop mode.
+- `?lite=1` reduces expensive visual effects and XR framebuffer scale for a slower headset.
+- `?hz=90` requests that frame rate if Quest Browser lists it as supported.
+- The OFFLINE chip appears after a lost WORLD connection; the client reconnects with backoff and checks half-open sockets with pings.
+- The XR renderer is shared across AR sessions and scene resources are released on exit.
+
+For a desktop benchmark with emulated XR and a throttled CPU, run `node scripts/perf-bench.mjs` from `quest/`. The `--fuzz` option sends malformed HUD messages to check that one bad payload does not stop rendering.
+
 ## Camera glass and hand pointers
 
 AR preserves Quest's native surrounding passthrough, including through panels.

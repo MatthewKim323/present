@@ -1,5 +1,9 @@
 import { applyDev, withDeltas } from "./devpanels.js";
 import { applyVision } from "./visionfx.js";
+import { observeSwarm } from './swarmviz.js';
+import { applyBrain } from './brainpanel.js';
+import { applyMemory } from './memorypanel.js';
+import { warnOnce } from './perf.js';
 import {
   applyPanelCommand,
   livePanels,
@@ -23,6 +27,7 @@ export class HudState {
     this.selectedTrack = null;
     this.view = "person";
     this.dockVisible = true;
+    this.watches = [];
     this.version = 0; // bumps on any change (renderers re-rasterize)
     this.frameSize = [640, 480]; // last sent frame size, for pixel bboxes
   }
@@ -81,9 +86,19 @@ export class HudState {
   //   - { kind: "track", track_id, bbox, label? }
   // and an optional `bbox` directly on person_card / agent_activity.
   apply(msg) {
-    if (!msg || typeof msg !== "object") return;
-    if (applyDev(this, msg)) { this.touch(); return; }
-    if (applyVision(this, msg)) { this.touch(); return; }
+    if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
+    const bad = oversized(msg);
+    if (bad) { warnOnce(`drop ${msg.kind}: ${bad}`); return; }
+    const tag = msg.kind || msg.type || '?';
+    try { observeSwarm(this, msg); } catch (e) { warnOnce(`swarm ${tag}`, e); }
+    try { if (applyMemory(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`memory ${tag}`, e); return; }
+    try { if (applyBrain(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`brain ${tag}`, e); return; }
+    try { if (applyDev(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`dev ${tag}`, e); return; }
+    try { if (applyVision(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`vision ${tag}`, e); return; }
+    try { this._applyCore(msg); } catch (e) { warnOnce(`hud ${tag}`, e); }
+  }
+
+  _applyCore(msg) {
     if (msg.type === "person.encountered" && msg.payload) {
       const p = msg.payload;
       this._track(p.track_id, p.bbox, p.label);
@@ -106,7 +121,11 @@ export class HudState {
         )
           return;
         if (msg.bbox) this._track(msg.anchor_track_id, msg.bbox, msg.name);
-        this.cards.set(key(msg.anchor_track_id), withDeltas(this, { ...msg, t: now() }));
+        this.cards.set(key(msg.anchor_track_id), withDeltas(this, { ...msg, watching: this._watching(msg.person_id), t: now() }));
+        break;
+      case 'armed_watches':
+        this.watches = Array.isArray(msg.items) ? msg.items : [];
+        for (const [k, c] of this.cards) this.cards.set(k, { ...c, watching: this._watching(c.person_id) });
         break;
       case "memory_event":
         if (!validText(msg.text) || !validText(msg.detail, true)) return;
@@ -163,6 +182,12 @@ export class HudState {
     this.touch();
   }
 
+  _watching(pid) {
+    if (!pid) return null;
+    const topics = this.watches.filter(w => w?.person_id === pid).map(w => w.topic || w.action).filter(Boolean);
+    return topics.length ? topics.join(', ') : null;
+  }
+
   _track(id, bbox, label) {
     if (
       !validId(id) ||
@@ -200,6 +225,15 @@ export class HudState {
 }
 
 const key = (id) => (id == null ? "free" : String(id));
+const B64_CAP = { face_capture: 256e3, preview_shot: 6e6 };
+function oversized(msg) {
+  const cap = B64_CAP[msg.kind];
+  if (!cap) return null;
+  const b64 = msg.jpeg_b64;
+  if (b64 != null && typeof b64 !== 'string') return 'jpeg_b64 not a string';
+  if (b64 && b64.length > cap) return `jpeg_b64 ${(b64.length / 1e6).toFixed(1)}MB > ${(cap / 1e6).toFixed(2)}MB`;
+  return null;
+}
 const now = () => performance.now();
 
 function normBbox(b, [fw, fh]) {

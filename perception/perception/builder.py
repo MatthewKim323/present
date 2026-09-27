@@ -374,13 +374,31 @@ class LocalClaudeRunner:
             env.pop("ANTHROPIC_API_KEY", None)  # use the logged-in Claude subscription, not the extraction key
         return env
 
+    async def _clone(self, repo: str, d: Path) -> tuple[int, str]:
+        """Clone from a warm local cache of the repo (fetch only what's new) instead of the network every time."""
+        cache = self.cfg.workdir / ".cache" / repo.replace("/", "__")
+        if (cache / ".git").exists():
+            code, out = await _sh("git", "fetch", "-q", "origin", cwd=cache, timeout=120)
+            if code == 0:
+                await _sh("git", "reset", "-q", "--hard", "origin/HEAD", cwd=cache)
+        else:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            code, out = await _sh("gh", "repo", "clone", repo, str(cache), "--", "--quiet", timeout=600)
+            if code:
+                return code, out
+        code, out = await _sh("git", "clone", "-q", str(cache), str(d), timeout=120)
+        if code:
+            return code, out
+        url = (await _sh("git", "remote", "get-url", "origin", cwd=cache))[1].strip()
+        return await _sh("git", "remote", "set-url", "origin", url, cwd=d)
+
     async def run(self, job: Job, prompt: str, progress: Progress) -> RunResult:
         d = self.cfg.workdir / job.id
         if d.exists():
             shutil.rmtree(d)
         d.parent.mkdir(parents=True, exist_ok=True)
         await progress("cloning repo")
-        code, out = await _sh("gh", "repo", "clone", job.repo, str(d), "--", "--quiet")
+        code, out = await self._clone(job.repo, d)
         if code:
             return RunResult(False, error=f"clone failed: {out[-200:]}")
         code, out = await _sh("git", "ls-remote", "--heads", "origin", job.branch, cwd=d)
@@ -483,6 +501,10 @@ class ProcedureMemory:
         self.cfg = cfg
         self.dir = cfg.procedures_dir
         self.client = client or httpx.AsyncClient(timeout=30)
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.cfg.memorable_url and self.cfg.memorable_key)
 
     @staticmethod
     def task_line(spec: dict[str, Any]) -> str:
@@ -648,7 +670,8 @@ def activity(job: Job, state: str, note: str) -> dict[str, Any]:
 class Builder:
     def __init__(self, cfg: BuilderConfig, broadcast: Broadcast, *, runner: Runner | None = None, github: Any = None,
                  procedures: ProcedureMemory | None = None, anchor: Callable[[str | None], int | None] | None = None,
-                 on_procedure: Callable[[str, dict[str, Any], dict[str, Any]], Awaitable[Any]] | None = None) -> None:
+                 on_procedure: Callable[[str, dict[str, Any], dict[str, Any]], Awaitable[Any]] | None = None,
+                 procfeed: Any = None) -> None:
         self.cfg = cfg
         self.broadcast = broadcast
         self.runner: Runner = runner or LocalClaudeRunner(cfg)
@@ -657,6 +680,7 @@ class Builder:
         self.anchor = anchor or (lambda pid: None)
         self.preview = LocalPreview(cfg) if cfg.local_preview else None
         self.on_procedure = on_procedure  # ("learned" | "recalled", procedure doc, origin) -> e.g. mirror into GBrain
+        self.procfeed = procfeed  # procfeed.ProcFeed: `procedure` HUD phases (recording / extracting / learned / recalled / refused)
         self.jobs: dict[str, Job] = {}
         self.by_event: dict[str, str] = {}
         self.tasks: dict[str, asyncio.Task] = {}
@@ -697,20 +721,30 @@ class Builder:
         return {"event_id": job.event_id, "people": list(dict.fromkeys(people)), "project": job.spec.get("product"),
                 "feature": job.feature, "harness": "claude-code", "job_id": job.id}
 
-    async def _notify_procedure(self, kind: str, doc: dict[str, Any], job: Job, metrics: dict[str, Any] | None = None) -> None:
+    async def _notify_procedure(self, kind: str, doc: dict[str, Any], job: Job, metrics: dict[str, Any] | None = None) -> Any:
+        """-> the GBrain slug the procedure was mirrored to, if any."""
         if self.on_procedure is None:
-            return
+            return None
         try:
-            await self.on_procedure(kind, doc, {**self._origin(job), "metrics": metrics or {}})
+            return await self.on_procedure(kind, doc, {**self._origin(job), "metrics": metrics or {}})
         except Exception:  # noqa: BLE001
             log.exception("procedure hook failed")
+            return None
+
+    async def _proc(self, phase: str, job: Job, **kw: Any) -> None:
+        if self.procfeed is None:
+            return
+        try:
+            await self.procfeed.builder_phase(phase, job, **kw)
+        except Exception:  # noqa: BLE001
+            log.exception("procfeed %s failed", phase)
 
     async def _local_preview(self, job: Job) -> None:
         assert self.preview is not None
         await self._set(job, "done", f"PR #{job.pr_number} · starting local preview")
         url = await self.preview.start(job)
         if not url:
-            await self._set(job, "done", f"PR #{job.pr_number} opened · preview unavailable")
+            await self._set(job, "done", f"PR #{job.pr_number} opened")
             return
         job.preview_url = url
         job.mark("local_preview_ready")
@@ -741,9 +775,11 @@ class Builder:
         if job.recalled:
             await self.broadcast({"kind": "memory_event", "text": "RECALLED PROCEDURE",
                                   "detail": f"{job.recalled.get('title')} · {len(job.recalled.get('steps', []))} steps"})
-            await self._notify_procedure("recalled", job.recalled, job)
+            slug = await self._notify_procedure("recalled", job.recalled, job)
+            await self._proc("recalled", job, doc=job.recalled, gbrain_slug=slug)
         prompt = build_prompt(job, self.cfg.subdir, self.cfg.verify_cmd)
         await self._set(job, "running", f"coding: {job.feature}")
+        await self._proc("recording", job)
         run_task = asyncio.create_task(self.runner.run(job, prompt, lambda n: self._progress(job, n)))
         result: RunResult | None = None
         runner_done_at: float | None = None
@@ -763,7 +799,7 @@ class Builder:
                     if pr:
                         job.pr_number, job.pr_url, job.head_sha = pr["number"], pr["url"], pr.get("headRefOid")
                         job.mark("pr_opened")
-                        await self._set(job, "pr_open", f"PR #{job.pr_number} opened · building preview")
+                        await self._set(job, "pr_open", f"PR #{job.pr_number} opened · checks running")
                 if job.pr_number is not None and self.preview is not None:
                     if run_task.done():  # local preview is served from the checkout once the coder is finished
                         break
@@ -782,7 +818,7 @@ class Builder:
                         if state == "failure":  # the PR is still real; a blocked/failed preview is not a failed job
                             job.error = "preview deployment failed"
                             job.mark("preview_failed")
-                            await self._set(job, "done", f"PR #{job.pr_number} opened · preview unavailable")
+                            await self._set(job, "done", f"PR #{job.pr_number} opened")
                             break
             except Exception as e:  # noqa: BLE001
                 log.warning("builder %s poll error: %s", job.id, e)
@@ -807,15 +843,22 @@ class Builder:
             await self._local_preview(job)
         if result and result.trace:
             try:
+                if getattr(self.procedures, "configured", True):
+                    await self._proc("extracting", job)
                 job.procedure = await self.procedures.record(job, result.trace)
                 log.info("builder %s memorable: %s", job.id, {k: v for k, v in job.procedure.items() if k != "doc"})
                 doc = job.procedure.pop("doc", None)
                 if job.procedure.get("stored") and doc:
-                    await self._notify_procedure("learned", doc, job, {
-                        "tool_calls": job.stats.get("tool_calls"), "turns": job.stats.get("num_turns"),
-                        "seconds_to_pr": job.timings.get("pr_opened"), "seconds_to_preview": job.timings.get("preview_ready")})
+                    metrics = {"tool_calls": job.stats.get("tool_calls"), "turns": job.stats.get("num_turns"),
+                               "seconds_to_pr": job.timings.get("pr_opened"), "seconds_to_preview": job.timings.get("preview_ready")}
+                    slug = await self._notify_procedure("learned", doc, job, metrics)
+                    from .procfeed import clean_metrics  # noqa: PLC0415 (procfeed imports this module)
+                    await self._proc("learned", job, doc=doc, gbrain_slug=slug, admitted=True, metrics=clean_metrics(metrics))
+                elif job.procedure.get("reason") != "memorable not configured":
+                    await self._proc("refused", job, admitted=False, reason=job.procedure.get("reason"))
             except Exception as e:  # noqa: BLE001
                 job.procedure = {"stored": False, "reason": str(e)[:100]}
+                await self._proc("refused", job, admitted=False, reason=job.procedure["reason"])
 
 
 class BuilderSink:

@@ -13,6 +13,7 @@
 //   main.js     setDevSender(fn) so button presses go out as dev_action
 import * as THREE from 'three';
 import { drawPersonCard } from './panels.js';
+import { LITE, due } from './perf.js';
 
 const FONT = 'ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif';
 const MONO = 'ui-monospace, Menlo, monospace';
@@ -403,7 +404,7 @@ const PV_WIN_W = PV_W - PV_PAD * 2;
 const PV_WIN_H = Math.round(PV_WIN_W * 10 / 16);
 const PV_FOOT = 44;
 const PV_H = PV_HEAD + PV_WIN_H + PV_FOOT;
-const PV_S = 2.4;                  // supersample: 1440 px texture, about 1:1 with a 1280 wide shot
+const PV_S = 1.7;                  // supersample: 1020 px texture (<= 1024 for mobile GPUs); the panel spans ~560 headset px
 const PV_IN_MS = 460;              // pop-in
 const PV_OUT_MS = 220;             // dismiss fade
 const PV_AUTO_DELAY = 900;         // then scroll 0 -> 40% once
@@ -571,6 +572,7 @@ export class DesktopDev {
   draw(ctx, placed, vr) {
     const hud = this.hud;
     this.hits = [];
+    this.ssRect = null; // QM SWARM panel rect (memorypanel.js stacks under it)
     const gh = hud.devGithub, ss = hud.qmSwarm;
     const t = performance.now();
     this._cockpit(ctx, placed, vr, gh, ss, t);
@@ -623,7 +625,7 @@ export class DesktopDev {
         x = ghRect ? ghRect.x : leftX(w);
         y = ghRect ? ghRect.y + ghRect.h + 10 : y;
       }
-      put(c, x, y);
+      this.ssRect = put(c, x, y);
     }
   }
 
@@ -744,8 +746,9 @@ export class XrDev {
     } else this._drop('gh');
     if (hud.qmSwarm) {
       const s = hud.qmSwarm;
-      const sec = Math.floor(t / 250);
-      const m = this._mesh('ss', `${s._rx}:${sec}`, () => drawSwarmPanel(s, t));
+      // only running lanes animate (pulse dot, elapsed clock); a settled swarm redraws only on new data
+      const live = (s.workers || []).some((w) => (w.state || 'running') === 'running');
+      const m = this._mesh('ss', live ? `${s._rx}:${Math.floor(t / (LITE ? 500 : 250))}` : `${s._rx}`, () => drawSwarmPanel(s, t));
       place('ss', card ? cardHalf + 0.06 + m.w / 2 : 0.04 + m.w / 2);
     } else this._drop('ss');
     this._preview(head, headQ, t);
@@ -788,7 +791,7 @@ export class XrDev {
       mesh.lookAt(head);
       this.scene.add(mesh);
       p = this.pv = { mesh, key: shot._key, base, v: shot._v, drawn: t, moving: true };
-    } else if (moving || p.moving || p.v !== shot._v || t - p.drawn > 250) {
+    } else if (p.v !== shot._v || ((moving || p.moving) && due(p, LITE ? 10 : 24, t)) || t - p.drawn > 1000) {
       drawPreviewPanel(shot, t); // same canvas object, just re-upload
       p.mesh.material.map.needsUpdate = true;
       p.v = shot._v; p.drawn = t;

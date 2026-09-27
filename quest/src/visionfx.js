@@ -9,6 +9,7 @@
 //   xr.js       XrVision(scene, hud) in start(), .frame(xrHud, head, headQ) at the end of _frame
 //   mock.js     VISION_SCRIPT + VISION_LEAD (scripted: unknown -> intro -> learning -> recognized -> radar grows)
 import * as THREE from 'three';
+import { LITE, ANIM_HZ, due } from './perf.js';
 
 const FONT = 'ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif';
 const MONO = 'ui-monospace, Menlo, monospace';
@@ -49,7 +50,8 @@ export function applyVision(hud, msg) {
     case 'vision': {
       const t = now();
       if (msg.w && msg.h) hud.frameSize = [msg.w, msg.h];
-      for (const e of msg.tracks || []) {
+      for (const e of Array.isArray(msg.tracks) ? msg.tracks : []) {
+        if (!e || !Array.isArray(e.bbox) || e.bbox.length < 4 || !e.bbox.every(Number.isFinite)) continue; // malformed: skip, don't crash the frame
         const prev = v.faces.get(String(e.track_id));
         const f = prev || { sig: null, since: t };
         if (!prev || prev.e.state !== e.state) {
@@ -103,7 +105,7 @@ function liveFaces(hud, t = now()) {
 }
 
 function shownDims(r, t = now()) {
-  const p = easeOut((t - r.t) / RADAR_ANIM_MS);
+  const p = LITE ? 1 : easeOut((t - r.t) / RADAR_ANIM_MS);
   return (r.dims || []).map((d, i) => ({ label: d.label, value: (r.from[i]?.value ?? 0) + (d.value - (r.from[i]?.value ?? 0)) * p }));
 }
 
@@ -176,7 +178,7 @@ export function drawFace(ctx, r, f, film, t = now(), learnedAt = 0) {
   ctx.strokeStyle = col;
   ctx.lineWidth = e.state === 'recognized' ? 2 : 1.5;
   ctx.globalAlpha = e.state === 'detecting' ? 0.75 : 1;
-  if (e.state === 'recognized' && lockAge < LOCK_MS * 1.6) { ctx.shadowColor = ACCENT; ctx.shadowBlur = 14 * (1 - lock); }
+  if (!LITE && e.state === 'recognized' && lockAge < LOCK_MS * 1.6) { ctx.shadowColor = ACCENT; ctx.shadowBlur = 14 * (1 - lock); }
   ctx.beginPath();
   for (const [px, py, dx, dy] of [[x0, y0, 1, 1], [x0 + w, y0, -1, 1], [x0, y0 + h, 1, -1], [x0 + w, y0 + h, -1, -1]]) {
     ctx.moveTo(px + dx * L, py); ctx.lineTo(px, py); ctx.lineTo(px, py + dy * L);
@@ -190,8 +192,8 @@ export function drawFace(ctx, r, f, film, t = now(), learnedAt = 0) {
   text(ctx, `#${String(e.track_id).padStart(2, '0')}`, x0 + w, y0 - 5, { size: 8.5, font: MONO, color: DIM, align: 'right' });
   ctx.globalAlpha = 1;
 
-  // scan line sweeping while searching
-  if (searching) {
+  // scan line sweeping while searching (off in ?lite=1)
+  if (searching && !LITE) {
     const p = ((t / 1100) % 1);
     const sy = r.y + p * r.h;
     const g = ctx.createLinearGradient(0, sy - r.h * 0.18, 0, sy);
@@ -214,7 +216,7 @@ export function drawFace(ctx, r, f, film, t = now(), learnedAt = 0) {
     for (const [a, b] of [[0, 1], [0, 2], [1, 2], [2, 3], [2, 4], [3, 4]]) { ctx.moveTo(...pts[a]); ctx.lineTo(...pts[b]); }
     ctx.stroke();
     pts.forEach(([px, py], i) => {
-      ctx.globalAlpha = 0.6 + 0.4 * Math.abs(Math.sin(t / 300 + i));
+      ctx.globalAlpha = LITE ? 0.85 : 0.6 + 0.4 * Math.abs(Math.sin(t / 300 + i));
       ctx.fillStyle = ACCENT;
       ctx.beginPath(); ctx.arc(px, py, 2, 0, Math.PI * 2); ctx.fill();
     });
@@ -393,7 +395,7 @@ export function drawRadar(r, t = now()) {
   return c;
 }
 
-const radarAnimating = (r, t = now()) => t - r.t < 1300;
+const radarAnimating = (r, t = now()) => !LITE && t - r.t < 1300;
 
 function radarFor(hud, cardMsg) {
   const radar = hud.vfx?.radar;
@@ -442,6 +444,11 @@ export class DesktopVision {
 
 const M_PER_PX = 0.0012; // same as the person card
 const PAD_L = 140, PAD_R = 90, PAD_T = 80, PAD_B = 130, FACE_PX = 200;
+// Face plane supersample in XR. The plane spans ~25 deg at 1.6 m (~500 headset px), so 1.25x (~540 texels
+// wide) is already sharper than the display; 2x was an 860 px upload every frame.
+const VFX_S = 1.25;
+const UNIT_PLANE = new THREE.PlaneGeometry(1, 1); // shared by every face / radar plane (scaled per mesh)
+const _right = new THREE.Vector3(), _up = new THREE.Vector3(), _v = new THREE.Vector3();
 
 export class XrVision {
   constructor(scene, hud) {
@@ -451,19 +458,22 @@ export class XrVision {
   }
 
   // Unit plane scaled to (wm, hm) meters; the canvas (cw x ch css px) is only rebuilt when its size changes.
-  _plane(k, cw, ch, wm, hm) {
+  _plane(k, cw, ch, wm, hm, sc = VFX_S) {
     let m = this.meshes.get(k);
     if (!m || m.cw !== cw || m.ch !== ch) {
       const canvas = document.createElement('canvas');
-      canvas.width = cw * S; canvas.height = ch * S;
+      canvas.width = Math.round(cw * sc); canvas.height = Math.round(ch * sc);
       const tex = new THREE.CanvasTexture(canvas);
       tex.colorSpace = THREE.SRGBColorSpace;
+      // redrawn often: no mipmap rebuild per upload (the texture is ~1:1 with display pixels anyway)
+      tex.generateMipmaps = false;
+      tex.minFilter = THREE.LinearFilter;
       const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+      const mesh = new THREE.Mesh(UNIT_PLANE, mat);
       mesh.renderOrder = 9; // under the cards
       if (m) { mesh.position.copy(m.mesh.position); mesh.userData.placed = true; this._drop(k); }
       this.scene.add(mesh);
-      m = { mesh, canvas, cw, ch };
+      m = { mesh, canvas, cw, ch, sc };
       this.meshes.set(k, m);
     }
     m.mesh.scale.set(wm, hm, 1);
@@ -474,7 +484,7 @@ export class XrVision {
     const m = this.meshes.get(k);
     if (!m) return;
     this.scene.remove(m.mesh);
-    m.mesh.geometry.dispose(); m.mesh.material.map.dispose(); m.mesh.material.dispose();
+    m.mesh.material.map.dispose(); m.mesh.material.dispose(); // geometry is the shared UNIT_PLANE
     this.meshes.delete(k);
   }
 
@@ -486,8 +496,8 @@ export class XrVision {
     const dist = xr.config.cardDistance;
     const hfov = THREE.MathUtils.degToRad(xr.config.hfov);
     const [fw, fh] = hud.frameSize;
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(headQ);
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(headQ);
+    const right = _right.set(1, 0, 0).applyQuaternion(headQ);
+    const up = _up.set(0, 1, 0).applyQuaternion(headQ);
     for (const [k, f] of liveFaces(hud, t)) {
       const [bx, by, bw, bh] = f.e.bbox;
       const facePxH = Math.max(96, Math.round(FACE_PX * (bh * fh) / Math.max(1e-6, bw * fw) / 16) * 16); // quantized: canvas rebuilt rarely
@@ -497,11 +507,15 @@ export class XrVision {
       const key = 'vfx:' + k;
       seen.add(key);
       const m = this._plane(key, cw, ch, cw * mpp, ch * mpp);
-      const ctx = m.canvas.getContext('2d');
-      ctx.setTransform(S, 0, 0, S, 0, 0);
-      ctx.clearRect(0, 0, cw, ch);
-      drawFace(ctx, { x: PAD_L, y: PAD_T, w: FACE_PX, h: facePxH }, f, hud.vfx.film.get(k), t, hud.vfx.learnedAt.get(k) || 0);
-      m.mesh.material.map.needsUpdate = true;
+      // animated reticle: redraw + re-upload at ANIM_HZ, not every frame (position still follows every frame)
+      if (m.e !== f.e || due(m, ANIM_HZ, t)) {
+        m.e = f.e;
+        const ctx = m.canvas.getContext('2d');
+        ctx.setTransform(m.sc, 0, 0, m.sc, 0, 0);
+        ctx.clearRect(0, 0, cw, ch);
+        drawFace(ctx, { x: PAD_L, y: PAD_T, w: FACE_PX, h: facePxH }, f, hud.vfx.film.get(k), t, hud.vfx.learnedAt.get(k) || 0);
+        m.mesh.material.map.needsUpdate = true;
+      }
       // face center in the world, then shift so the canvas' face rect sits on it
       const p = xr._rayPoint(head, headQ, bx + bw / 2, by + bh / 2, dist);
       const dx = (cw / 2 - (PAD_L + FACE_PX / 2)) * mpp, dy = (ch / 2 - (PAD_T + facePxH / 2)) * mpp;
@@ -516,18 +530,18 @@ export class XrVision {
       if (!r || !card) continue;
       seen.add('radar');
       const wm = RADAR_W * M_PER_PX, hm = RADAR_H * M_PER_PX;
-      const m = this._plane('radar', RADAR_W, RADAR_H, wm, hm);
-      if (m.r !== r || radarAnimating(r, t)) {
+      const m = this._plane('radar', RADAR_W, RADAR_H, wm, hm, S);
+      if (m.r !== r || (radarAnimating(r, t) && due(m, ANIM_HZ, t))) {
         const src = drawRadar(r, t);
         const ctx = m.canvas.getContext('2d');
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, m.canvas.width, m.canvas.height);
-        ctx.drawImage(src, 0, 0);
+        ctx.drawImage(src, 0, 0, m.canvas.width, m.canvas.height);
         m.mesh.material.map.needsUpdate = true;
         m.r = r;
       }
       const ch = card.mesh.geometry.parameters.height;
-      const target = card.mesh.position.clone().add(new THREE.Vector3(0, ch / 2 + hm / 2 + 0.02, 0));
+      const target = _v.copy(card.mesh.position).add(_right.set(0, ch / 2 + hm / 2 + 0.02, 0));
       if (!m.mesh.userData.placed) { m.mesh.position.copy(target); m.mesh.userData.placed = true; } else m.mesh.position.lerp(target, 0.15);
       m.mesh.lookAt(head);
       break;

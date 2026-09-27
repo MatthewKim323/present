@@ -46,7 +46,7 @@ QM  --traces-->  Memorable  (native QM integration)
 | `physical_bug.detected` | `{ device, symptom, repro }` |
 | `task.demonstrated` / `world.task_requested` | `{ instruction, target: "whiteboard"\|"object"\|..., snapshot_ref? }` |
 | `object.state_changed` / `object.last_seen` | `{ object, state?, location? }` |
-| `world.watch_requested` | `{ instruction, person_id?, object? }` (the wearer sets a standing watch out loud: "next time Matthew brings up pricing, prep a counter-offer". QM turns it into a WorldWatch with one model call; later events matching it fire its action. See QM `docs/worldhooks.md`) |
+| `world.watch_requested` | `{ instruction, person_id?, object?, person_name?, topic_terms?: [str], action?, once?, track_id? }` (extras are additive, from the world service's haiku parse, `perception/watches.py`; only the wearer arms watches) (the wearer sets a standing watch out loud: "next time Matthew brings up pricing, prep a counter-offer". QM turns it into a WorldWatch with one model call; later events matching it fire its action. See QM `docs/worldhooks.md`) |
 | `world.entity_adopted` | `{ entity_kind: "person"\|"object", entity_id, label, track_id? }` (pinch on a tracked person/object: the world service forwards `{kind:"gesture",type:"pinch",target_track_id}` as this event. QM gives the entity one persistent thread `world:entity:<kind>:<id>`; every later event mentioning it lands there) |
 | `relationship.updated` | `{ person_id, deltas: [{ kind, text }], summary, encounter_id, utterances_seen }` emitted LIVE during a conversation (every ~20s or 4 utterances, `perception/live.py`, small fast model). `kind`: `fact` \| `preference` \| `topic` \| `sentiment` \| `shared_context` \| `open_loop_you_owe` \| `open_loop_owes_you`; `text` is a terse HUD line ("prefers async demos"). Only new info, never transcript. GBrain writes it to `relationships/<wearer>-<person>` immediately |
 
@@ -75,6 +75,19 @@ QM swarm tracker (WorldHooks) posts to `POST :8787/hud`: `agent_activity` for ev
 `here: "YC hackathon, San Francisco"` (current situation, `WORLD_SITUATION`),
 `relationship: "early Opal user, wants easier setup"` (1-line summary),
 `recent_deltas: ["prefers async demos", ...]` (last 3 learned, newest first).
+`agent: { state: "assigned", thread: "world:entity:person:<id>" }` (the wearer pinched this person: `world.entity_adopted`; the card shows an AGENT pill).
+
+Watches and entity agents (`perception/watches.py`):
+
+```json
+{ "kind": "memory_event", "text": "WATCH ARMED", "detail": "pricing · Matthew" }
+{ "kind": "memory_event", "text": "WATCH FIRED", "detail": "pricing · Matthew" }
+{ "kind": "memory_event", "text": "AGENT ASSIGNED", "detail": "MATTHEW" }
+{ "kind": "armed_watches", "items": [{ "id": "evt_...", "qm_id": "ww_..." | null, "topic": "pricing", "person_id": "matthew",
+    "person": "Matthew", "action": "prep a counter-offer", "once": true, "fired": 0, "state": "armed" }] }   // snapshot, replace
+```
+
+`WATCH FIRED` comes from QM's `/world-events` reply (`watches: [ids]`) or `POST :8787/hud {"kind":"watch_fired","watch_id":"ww_..."}`. Cards of a watched person get `watching: "pricing"` client-side (WATCHING row).
 
 Builder (feature_request.detected -> coding agent -> PR): same `agent_activity` shape, one worker named `Builder`, plus optional `job_id` on the message and `url` (Vercel preview) / `pr_url` on the worker once known. Notes go `queued: <feature>` -> `coding: <feature>` / `editing LandingPage.tsx` / `building` / `opening PR` -> `PR #N opened · building preview` -> done `PR #N · preview ready · <url>` (or failed `failed: <reason>`). Before coding, a recalled Memorable procedure shows as `{ "kind": "memory_event", "text": "RECALLED PROCEDURE", "detail": "<title> · <n> steps" }`.
 
@@ -122,6 +135,42 @@ Builder lane. Clients: while a `qm_swarm` with the same `hook` is shown, don't r
 hook (it is still broadcast for older clients). GitHub polling runs every ~5s while a Builder job or swarm is
 active, ~30s otherwise.
 
+### Procedural memory (Memorable, `perception/procfeed.py`, Quest `src/memorypanel.js`)
+
+Memorable is the procedural memory ("what have I learned how to do"), shown apart from GBrain's declarative
+memory. One message per phase of a harness run:
+
+```json
+{ "kind": "procedure", "phase": "recording" | "extracting" | "learned" | "recalled" | "refused",
+  "source": "qm-swarm" | "claude-code", "event_id": "evt_01J..." , "job_id": "b451461",
+  "title": "add discord command",
+  "steps": [{ "seq": 1, "action": "Read", "activity_class": "read" | "search" | "write" | "execute", "target": "discord-bot/core/bot.py" }],
+  "steps_total": 14,                 // only when steps was capped at 12
+  "trigger": "ship customer feature request: Add !recap command",
+  "gbrain_slug": "procedures/add-discord-command",   // learned/recalled: where GBrain mirrored it (null on the stub)
+  "admitted": true, "reason": "no_postcondition",    // refused: Memorable's judge reason, verbatim
+  "tool_calls_seen": 7,                               // recording: running count of captured tool calls
+  "metrics": { "tool_calls": 14, "turns": 9, "seconds": 63 } }  // learned: measured numbers of the source run (only real values; seconds_to_pr from the Builder)
+```
+
+Builder (`claude-code`): `recalled` (before the coder starts, steps injected into its prompt) -> `recording` when the
+coder starts, re-sent with a rising `tool_calls_seen` as tool calls stream in -> `extracting` when it POSTs Memorable
+`/v1/extract` (skipped when Memorable is not configured) -> `learned` (admitted draft + GBrain slug) or `refused`
+(`reason`). QM (`qm-swarm`): `POST :8787/procedures {kind: "learned" | "recalled" | "refused", draft: {title, steps?,
+task?}, origin: {harness, event_id?, job_id?, reason?}}` -> GBrain mirror (learned/recalled) -> the same `procedure`
+message with the slug. Fields that are unknown are omitted, never faked. `target` is a short redacted path or the first
+line of a command.
+
+```json
+{ "kind": "procedure_library", "items": [{ "title": "add discord command", "steps_count": 5, "source": "claude-code",
+  "learned_at": "2026-09-27T21:04:11Z", "uses": 1, "gbrain_slug": "procedures/add-discord-command" }] }
+```
+
+Full snapshot, newest first: local Builder drafts (`perception/data/procedures/*.json`) plus QM-learned procedures
+(index in `perception/data/procedure_library.json`, which also holds GBrain slugs and recall counts). Sent to each HUD
+client on connect, on service start, and after every learn / recall. `GET :8787/procedures` returns
+`{count, items: [...same + steps, trigger, path]}`.
+
 Quest -> world service (over /ws/quest), acting on those panels:
 
 ```json
@@ -149,6 +198,41 @@ the same thing as `open_preview`. Re-sending with the same `job_id` + `pr` swaps
 a fresh panel. Keep it well under the ws frame limit (JPEG q~0.8, <= ~600 KB).
 
 Debug: `/ws/quest?debug=1` also streams `{ "kind": "tracks", "tracks": [{ "track_id", "bbox", "person_id", "label" }] }` for anchoring.
+
+### GBrain live feed (`perception/gbrain_ops.py`, Quest `src/brainpanel.js`)
+
+Every GBrain call the world service makes (perception writes, the live relationship pass, person-card reads, QM
+worker reads through the proxy below, Memorable procedure pages) becomes one `gbrain_op`:
+
+```json
+{ "kind": "gbrain_op", "op": "query" | "search" | "get_page" | "put_page" | "add_timeline_entry" | "add_link",
+  "actor": "perception" | "live" | "card" | "memorable" | "qm:Context" | "qm:Product" | "qm:Builder" | "qm:<worker>",
+  "slug": "relationships/stephen-matthew",      // optional; add_link: the from page, plus "to"
+  "query": "matthew opal feedback",             // query/search only, <= 80 chars
+  "hits": [{ "slug": "feedback/2026-09-27-opal-landing-feedback", "title": "Opal landing feedback" }],  // query/search, max 5
+  "title": "Matthew",                           // get_page, when known
+  "ms": 142, "ok": true, "miss": true,          // miss: get_page on a page that does not exist yet
+  "person_id": "matthew",                       // when the slug is people/<id> or relationships/<wearer>-<id>
+  "event_id": "evt_01J...",                     // the WorldEvent the op serves, when known
+  "count": 3 }                                  // coalesced identical ops
+```
+
+Slugs, titles and short queries only (each <= 80 chars), never page bodies or snippets. Identical ops still queued
+fold into one line (`count`); the feed sends at most ~5/s (burst 5) and, if the backlog passes 24, sheds
+non-QM lines first. Reads are `query` / `search` / `get_page`; the rest are writes.
+
+Read-only GBrain for QM swarm workers (the world service holds the gbrain.io token; workers reach it at
+`http://host.docker.internal:8787` with `Authorization: Bearer $WORLD_HOOKS_SECRET`, 401 otherwise, 503 if the
+secret is unset):
+
+| route | returns |
+|---|---|
+| `POST /gbrain/query {q, actor, event_id?, limit?}` | `{q, results: [{slug, title, snippet}]}` hybrid query, snippet <= 200 chars (503 on the stub backend) |
+| `GET /gbrain/page/{slug}?actor=&event_id=` | `{slug, title, frontmatter, compiled_truth, timeline}` (compiled truth capped at 4000 chars, timeline 1500; 404 if missing) |
+| `GET /gbrain/person/{id}?actor=&event_id=` | the person-card context (`subtitle`, `last`, `you_owe`, `owes_you`, `seen_before`, `relationship`, `recent_deltas`) plus `facts`, `recent`, `you_owe_all`, `owes_you_all`, `encounters`, `relationship_page` |
+
+`actor` is the worker name (`Context` becomes `qm:Context`). Every call emits a `gbrain_op` with that actor; a
+person read always shows as `get_page people/<id>` so the HUD can link the feed to the person card.
 
 ### Perception overlay (`perception/visionfx.py`, Quest `src/visionfx.js`)
 

@@ -31,6 +31,7 @@ from typing import Any, Protocol
 import httpx
 
 from .events import slug as slugify
+from .gbrain_ops import ACTOR, OPS, normalize_hits, op_message
 from .sinks import StubGBrainSink
 
 log = logging.getLogger("world.gbrain")
@@ -41,7 +42,7 @@ PROTOCOL_VERSION = "2025-06-18"
 ALLOWED_TOOLS = frozenset({
     "whoami", "put_page", "get_page", "delete_page", "list_pages", "query", "search",
     "add_timeline_entry", "get_timeline", "add_link", "remove_link", "get_links", "get_backlinks",
-    "add_tag", "remove_tag", "get_tags", "remember", "recall", "restore_page",
+    "add_tag", "remove_tag", "get_tags", "remember", "recall", "restore_page", "get_brain_identity",
 })
 
 
@@ -484,6 +485,7 @@ class GBrainIOSink:
         self.writes_ok = 0
         self.writes_failed = 0
         self._signal_slugs: dict[str, str] = {}  # event id -> signal page slug
+        self.ops: Any = None  # GBrainOpFeed (gbrain_ops.py): every call becomes a gbrain_op HUD line
 
     # ---------- health ----------
     @property
@@ -502,7 +504,23 @@ class GBrainIOSink:
     async def _call(self, name: str, args: dict[str, Any], timeout: float | None = None) -> Any:
         if self.mcp is None:
             raise GBrainError("no MCP client")
-        return await asyncio.wait_for(self.mcp.call(name, args), timeout or self.write_timeout_s)
+        t0 = time.perf_counter()
+        res, ok, miss = None, False, False
+        try:
+            res = await asyncio.wait_for(self.mcp.call(name, args), timeout or self.write_timeout_s)
+            ok = True
+            return res
+        except NotFound:
+            ok = miss = True
+            raise
+        finally:
+            if self.ops is not None and name in OPS:
+                actor, event_id = ACTOR.get()
+                try:
+                    self.ops.publish(op_message(name, args, res, (time.perf_counter() - t0) * 1000, ok, actor=actor,
+                                                event_id=event_id, wearer_id=self.wearer_id, miss=miss))
+                except Exception:  # noqa: BLE001
+                    log.debug("gbrain_op publish failed", exc_info=True)
 
     async def _ensure_page(self, slug: str, content: str) -> None:
         if slug in self._known_pages:
@@ -556,10 +574,20 @@ class GBrainIOSink:
             finally:
                 q.task_done()
 
-    def _enqueue(self, job) -> None:
+    def _enqueue(self, job, actor: str | None = None, event_id: str | None = None) -> None:
         if self.mcp is None:
             return
-        self._ensure_worker().put_nowait(job)
+        cur = ACTOR.get()
+        who = (actor or cur[0], event_id or cur[1])
+
+        async def run() -> None:  # one worker task runs every job, so the actor rides along with each
+            tok = ACTOR.set(who)
+            try:
+                await job()
+            finally:
+                ACTOR.reset(tok)
+
+        self._ensure_worker().put_nowait(run)
 
     async def flush(self) -> None:
         if self._queue is not None:
@@ -781,7 +809,7 @@ class GBrainIOSink:
             await self._timeline(self.rel_slug(pid), "Learned: " + "; ".join(texts), f"{_hhmm()} live, at {self.situation.label}")
             await self._write_rel(pid)
 
-        self._enqueue(job)
+        self._enqueue(job, "live", event.get("id"))
 
     def _is_wearer(self, who: str | None) -> bool:
         w = (who or "").strip().lower()
@@ -836,7 +864,7 @@ class GBrainIOSink:
                 await self._timeline(f"people/{pid}", f"{title} ({SIGNAL_DIRS[t]})", f"see [[{slug}]]")
                 await self._write_rel(pid)
 
-        self._enqueue(job)
+        self._enqueue(job, "perception", event.get("id"))
 
     @staticmethod
     def _signal_content(t: str, p: dict[str, Any]) -> tuple[str, list[str], dict[str, Any]]:
@@ -897,7 +925,14 @@ class GBrainIOSink:
         return [*st.facts, *st.deltas, *(f"you owe: {x}" for x in st.you_owe), *(f"owes you: {x}" for x in st.owes_you)]
 
     # ---------- person card ----------
-    async def person_context(self, person_id: str) -> dict[str, Any] | None:
+    async def person_context(self, person_id: str, actor: str = "card", event_id: str | None = None) -> dict[str, Any] | None:
+        tok = ACTOR.set((actor, event_id))
+        try:
+            return await self._person_context(person_id)
+        finally:
+            ACTOR.reset(tok)
+
+    async def _person_context(self, person_id: str) -> dict[str, Any] | None:
         base = await self.fallback.person_context(person_id) or {}
         if self.up and (person_id not in self.rel or not self.rel[person_id].hydrated):
             try:
@@ -922,6 +957,38 @@ class GBrainIOSink:
             "recent_deltas": list(reversed(st.deltas[-3:])) if st else [],
         })
         return ctx
+
+    # ---------- read proxy for QM workers (gbrain_ops.add_gbrain_routes) ----------
+    async def read_query(self, q: str, *, actor: str, event_id: str | None = None, limit: int = 8) -> list[dict[str, Any]]:
+        tok = ACTOR.set((actor, event_id))
+        try:
+            res = await self._call("query", {"query": q, "limit": limit, "snippet_chars": 240})
+        finally:
+            ACTOR.reset(tok)
+        return normalize_hits(res, limit)
+
+    async def read_page(self, slug: str, *, actor: str, event_id: str | None = None) -> dict[str, Any]:
+        tok = ACTOR.set((actor, event_id))
+        try:
+            page = await self._call("get_page", {"slug": slug})
+        finally:
+            ACTOR.reset(tok)
+        return page if isinstance(page, dict) else {"slug": slug, "compiled_truth": str(page)}
+
+    async def read_person(self, pid: str, *, actor: str, event_id: str | None = None) -> dict[str, Any]:
+        """What the HUD card shows, plus what the relationship page knows (facts, recent, all open loops)."""
+        hit = self._person.get(pid)
+        cached = bool(hit) and time.time() - hit[0] < self.person_ttl_s
+        ctx = await self.person_context(pid, actor=actor, event_id=event_id) or {}
+        if self.ops is not None and cached:  # served from cache: still show the QM read as a person read
+            self.ops.publish(op_message("get_page", {"slug": f"people/{pid}"}, None, 0, True, actor=actor,
+                                        event_id=event_id, wearer_id=self.wearer_id))
+        st = self.rel.get(pid)
+        return {"person_id": pid, "name": st.name if st else self._name(pid), "backend": "gbrain.io" if self.up else "stub",
+                "relationship_page": self.rel_slug(pid), **ctx,
+                "facts": list(st.facts[-12:]) if st else [], "recent": list(st.recent[:6]) if st else [],
+                "you_owe_all": list(st.you_owe) if st else [], "owes_you_all": list(st.owes_you) if st else [],
+                "encounters": st.encounters if st else 0}
 
     # ---------- Memorable -> GBrain bridge ----------
     async def remember_procedure(self, doc: dict[str, Any], origin: dict[str, Any]) -> str | None:
@@ -951,7 +1018,7 @@ class GBrainIOSink:
                                      f"see [[{slug}]], {len(doc.get('steps') or [])} steps, at {self.situation.label}")
             await self._timeline(slug, f"Learned ({origin.get('harness') or 'agent'})", f"from {', '.join(refs)}")
 
-        self._enqueue(job)
+        self._enqueue(job, "memorable", origin.get("event_id"))
         return slug
 
 
@@ -963,12 +1030,15 @@ class GBrainIOSink:
         people = [p for p in (origin.get("people") or []) if p and p != self.wearer_id]
         what = origin.get("feature") or "a similar request"
 
+        stub = procedure_page(doc, {**origin, "people": people}, self.situation, [f"[[{self.situation.slug}]]"])
+
         async def job() -> None:
+            await self._ensure_page(slug, stub)  # recalled from a store GBrain never saw (e.g. QM's): create it first
             await self._timeline(slug, f"Recalled for: {what}", f"at {self.situation.label}, event {origin.get('event_id') or '-'}")
             for pid in people:
                 await self._timeline(self.rel_slug(pid), f"Agents reused a learned procedure: {doc['title']}", f"see [[{slug}]], for {what}")
 
-        self._enqueue(job)
+        self._enqueue(job, "memorable", origin.get("event_id"))
         return slug
 
 

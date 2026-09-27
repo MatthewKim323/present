@@ -128,6 +128,7 @@ export function drawPersonLabel(m, { selected = false, focused = false } = {}) {
     color: MUTED,
     max: 184,
   });
+  if (m.agent) text(ctx, 'AGENT', 184, 28, { size: 9, weight: 600, color: MUTED, max: 45, track: 0.8 });
   if (selected || focused)
     brackets(ctx, w, h, selected ? ACCENT : "rgba(255,255,255,0.7)");
   return c;
@@ -142,6 +143,7 @@ export function drawPersonCard(m) {
     m.last && ["LAST CONVERSATION", m.last],
     m.owes_you && ["FROM THEM", m.owes_you],
     m.you_owe && ["YOUR NEXT STEP", m.you_owe],
+    m.watching && ["WATCHING", m.watching],
   ]
     .filter(Boolean)
     .map(([label, value]) => ({
@@ -258,7 +260,7 @@ export function drawMemoryList(history = []) {
 }
 
 export function drawAgentActivity(m = {}, t = performance.now()) {
-  const workers = (m.workers || []).slice(0, 5);
+  const workers = (Array.isArray(m.workers) ? m.workers : []).slice(0, 5);
   const running = workers.filter(
     (w) => (w.state || "running") === "running",
   ).length;
@@ -393,7 +395,7 @@ function sentence(value) {
 }
 
 export const anyRunning = (m) =>
-  (m.workers || []).some((w) => (w.state || "running") === "running");
+  (Array.isArray(m.workers) ? m.workers : []).some((w) => (w.state || "running") === "running");
 
 // All 24 tool types share a restrained hierarchy. The fields determine the
 // content, never executable markup. Hit rectangles are in unscaled CSS pixels.

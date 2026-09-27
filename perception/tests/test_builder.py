@@ -99,7 +99,7 @@ async def test_happy_path_states_and_hud(tmp_path):
     assert n[0] == ("running", "queued: Add How it works section under hero")
     assert ("running", "coding: Add How it works section under hero") in n
     assert ("running", "editing LandingPage.tsx") in n
-    assert ("running", "PR #7 opened · building preview") in n
+    assert ("running", "PR #7 opened · checks running") in n
     assert n[-1] == ("done", "PR #7 · preview ready · https://opal-git-x.vercel.app")
     last = sent[-1]
     assert last["hook"] == "feature_request.detected" and last["anchor_track_id"] == 3
@@ -136,7 +136,7 @@ async def test_preview_failure(tmp_path):
     b, sent = make(tmp_path, github=FakeGitHub(preview_state="failure"))
     job = await b.dispatch(None, SPEC)
     await finish(b, job)
-    assert job.state == "done" and notes(sent)[-1] == ("done", "PR #7 opened · preview unavailable")
+    assert job.state == "done" and notes(sent)[-1] == ("done", "PR #7 opened")
 
 
 async def test_timeout(tmp_path):

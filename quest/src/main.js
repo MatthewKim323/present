@@ -19,12 +19,13 @@ import {
 } from "./capture.js";
 import { PANEL_CATALOG } from "./panel-catalog.js";
 import { mountShell } from "./shell.jsx";
+import { mountDesktopOverlays, mountDiag } from './perf.js';
 
 const video = document.getElementById("cam");
 const hud = new HudState();
 const isQuest = /OculusBrowser|Quest/i.test(navigator.userAgent);
 const source = config.source || (isQuest ? "quest3s" : "desktop-sim");
-let audioCtx, grabber, mic, xr, desktop, link;
+let audioCtx, grabber, mic, xr, lastXr, desktop, link;
 let cameraLocalOnly = false;
 let mode = "idle",
   busy = false,
@@ -119,6 +120,8 @@ function ensureLink() {
       log(`connection ${state}`);
     },
   });
+  hud.net = link.net;
+  if (config.diag && !document.getElementById('diag')) mountDiag({ link, xrInfo: () => (xr || lastXr)?.info() });
 }
 function pinch(track) {
   if (mode === "preview") return;
@@ -329,6 +332,7 @@ async function enterAR() {
       onPanelDismiss: panelDismiss,
     });
     xr.onEnd = () => {
+      lastXr = xr;
       xr = null;
       if (pendingDetail) { showDetail(pendingDetail); pendingDetail = null; }
       showDesktop();
@@ -552,6 +556,9 @@ const api = {
   },
 };
 mountShell(api);
+mountDesktopOverlays(hud);
+addEventListener('error', (e) => log(`error: ${e.message} (${String(e.filename || '').split('/').pop()}:${e.lineno})`));
+addEventListener('unhandledrejection', (e) => log(`unhandled: ${e.reason?.message || e.reason}`));
 setInterval(notify, 350);
 const emulated = config.emulate
   ? import("iwer").then(({ XRDevice, metaQuest3 }) => {

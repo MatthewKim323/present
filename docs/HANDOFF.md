@@ -44,6 +44,50 @@ No cloud Claude Code (routines are gone from the code). QM is the execution laye
 4. Get Quest camera frames flowing (see quest/README.md fallback if direct camera access blocks).
 5. Don't run `memorable install-hooks` (edits global ~/.claude settings) or `memorable init gbrain`.
 
+## Stage runbook
+
+Roles: **Stephen** wears the Quest (founder). **Matthew** is the customer in front of him. **Director** (third teammate) sits at the laptop with `/director` open and the terminal. Nobody talks to the AI.
+
+### Once, before the first take
+
+```bash
+scripts/dev-up.sh                          # QM :8091 + world :8787 + Quest client :5173 (logs in .logs/); restart world after pulling new code
+scripts/take.sh --dry                      # checklist only, changes nothing
+cd perception && uv run python -m perception.demo_inject --rehearse   # optional full rehearsal, no people (~10 min, opens 2 real PRs)
+```
+
+Open the director console on the laptop: `http://localhost:8787/director?token=<WORLD_HOOKS_SECRET from perception/.env>` (the token is kept in localStorage, so later just `/director`). `DIRECTOR_TOKEN` overrides it if set on the world service. Mirror the headset: `scripts/cast-quest.sh --record` (records every take to `recordings/`, which is also the fallback video).
+
+### Before every take
+
+```bash
+scripts/take.sh                  # matthew stays enrolled: the take opens on recognition
+scripts/take.sh --fresh-face     # forget matthew (people.json backed up) so "I'm Matthew" learns his face live
+```
+
+`take.sh` must end in green `READY`. It starts anything that is down (dev-up.sh), runs `world-dev.sh gc` (stale swarm computers exhaust docker address pools and the swarm never spawns, see QM.md R1), resets the GBrain seeds, checks matthew's enrollment (a plain `take.sh` after a `--fresh-face` take restores the backup), prints Memorable status (read-only; QM's Memorable tables are never touched), checks demo PR #6 on qtzx06/opal is open, checks the Builder is idle and the Quest page is up, then resets the HUD. `--clear-procedures` moves local Builder drafts aside (run 1 then has nothing to recall); default keeps them.
+
+### The take (live), with the director button for each beat
+
+| # | Beat | Live trigger | Director button if it flakes |
+|---|---|---|---|
+| 1 | (fresh-face only) Matthew: "hey, I'm Matthew" | ASR intro -> face learning, filmstrip | `Matthew: "I'm Matthew"` (still needs his face tracked) |
+| 2 | Stephen looks at Matthew, person card from GBrain | face match | `Matthew recognized` |
+| 3 | They talk; card compounds with context deltas | live relationship pass (~20s / 4 utterances) | `Live facts` |
+| 4 | Matthew: "you should add a bang recap command" | extraction -> `feature_request.detected` -> QM swarm (Context / Product / Builder) -> PR + preview (~4-5 min) | `Matthew asks for !recap` |
+| 5 | While run 1 builds: Stephen: "next time Matthew brings up pricing, prep a counter-offer" | `world.watch_requested` | `Watch: next time Matthew mentions pricing` |
+| 6 | Matthew: "add a bang streak command" | run 2, `RECALLED PROCEDURE` on the HUD, run 1 vs run 2 line (real numbers, may say NO GAIN) | `Matthew asks for !streak` |
+
+Director watches the right-hand columns: QM SWARM lanes, BUILDER job + PR link, HUD (last 30) to confirm each beat actually reached the headset, header pills (QM, gbrain op count, HUD clients, enrolled/tracks). `Reset HUD` clears cards, toasts and the swarm panel between beats if something stale sticks.
+
+### Fallbacks, in order
+
+1. **ASR or extraction misses a line**: press that beat's director button. Same code path as live (events go through GBrain, QMSink, HUD, Builder), so the swarm and PR are real.
+2. **Recognition flakes**: `Matthew recognized` (anchors to the tracked face if there is one, else track 4).
+3. **Swarm is slow on stage**: talk over it; the demo PR #6 (`[WORLD] Add !recap command`) is already open with a preview to show if run 1 isn't done in time.
+4. **Headset or world service dies**: Quest page with `?mock=1` (scripted HUD, no server) or `?mockseq=swarm` for the swarm sequence.
+5. **Everything dies**: play the last good recording from `recordings/`.
+
 ## Rules
 
 Commit + push small and often, no AI attribution in commits, no em dashes, long commands in background.

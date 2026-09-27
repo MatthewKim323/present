@@ -4,6 +4,10 @@ import * as THREE from "three";
 import { FluidGlassPass } from "./fluid-glass-pass.js";
 import { XrPointers } from "./xr-pointers.js";
 import { XrVision } from "./visionfx.js";
+import { XrSwarm } from './swarmviz.js';
+import { XrBrain } from './brainpanel.js';
+import { XrMemory } from './memorypanel.js';
+import { due, safe, frameBegin, frameEnd, perfLine, drawPerf, drawOffline, offlineText } from './perf.js';
 import { XrDev, deltasAnimating } from "./devpanels.js";
 import { drawActionPerson as drawPersonCardPlus } from './person-actions.js';
 import {
@@ -20,6 +24,19 @@ const M_PER_PX = 0.0012;
 const VIEWS = ["person", "memories", "agents"];
 const EMPTY_ACTIVITY = { workers: [] };
 const DOCK_Y = -0.23;
+let sharedRenderer = null;
+
+function getRenderer(config) {
+  if (sharedRenderer) return sharedRenderer;
+  const renderer = new THREE.WebGLRenderer({ antialias: !config.lite, alpha: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(devicePixelRatio);
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 0);
+  renderer.xr.enabled = true;
+  renderer.xr.setReferenceSpaceType('local');
+  if (config.lite) renderer.xr.setFramebufferScaleFactor(0.85);
+  return (sharedRenderer = renderer);
+}
 
 export class XrHud {
   constructor({
@@ -71,16 +88,8 @@ export class XrHud {
 
   async start() {
     try {
-      const renderer = new THREE.WebGLRenderer({
-        antialias: true,
-        alpha: true,
-      });
+      const renderer = getRenderer(this.config);
       this.renderer = renderer;
-      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-      renderer.setSize(innerWidth, innerHeight);
-      renderer.setClearColor(0x000000, 0);
-      renderer.xr.enabled = true;
-      renderer.xr.setReferenceSpaceType("local");
       this.scene = new THREE.Scene();
       this.camera = new THREE.PerspectiveCamera(
         70,
@@ -93,11 +102,15 @@ export class XrHud {
         optionalFeatures: [
           "hand-tracking",
           "local-floor",
+          "dom-overlay",
         ],
+        domOverlay: { root: document.getElementById('xr-dom') || document.body },
       });
       this.session = session;
       session.addEventListener("end", this._end);
       await renderer.xr.setSession(session);
+      if (this.config.hz && session.updateTargetFrameRate && [...(session.supportedFrameRates || [])].includes(this.config.hz))
+        session.updateTargetFrameRate(this.config.hz).catch(() => {});
       const fluidGlass = await FluidGlassPass.create(renderer, this.scene, {
         nativePassthrough: true,
       });
@@ -109,6 +122,9 @@ export class XrHud {
       this.refSpace = renderer.xr.getReferenceSpace();
       this._initDev();
       this.vfx = new XrVision(this.scene, this.hud);
+      this.swarm = new XrSwarm(this.scene, this);
+      this.brain = new XrBrain(this.scene, this.hud);
+      this.mem = new XrMemory(this.scene, this.hud);
       session.addEventListener("select", this._select);
       this._createCursor();
       renderer.setAnimationLoop((t, frame) => this._frame(t, frame));
@@ -122,6 +138,18 @@ export class XrHud {
 
   async end() {
     if (this.session) await this.session.end();
+  }
+
+  info() {
+    const s = this.session;
+    if (!s) return this._info || null;
+    return (this._info = {
+      features: [...(s.enabledFeatures || ['(enabledFeatures n/a)'])],
+      frameRate: s.frameRate != null ? Math.round(s.frameRate) : null,
+      rates: [...(s.supportedFrameRates || [])],
+      blend: s.environmentBlendMode || '?',
+      fbScale: this.config.lite ? 0.85 : 1,
+    });
   }
 
   _initDev() {
@@ -170,7 +198,20 @@ export class XrHud {
       this.cursor.material.dispose();
       this.cursor = null;
     }
-    this.renderer?.dispose();
+    // The renderer and WebGL context are shared across AR entries. The session
+    // scene is disposable; preserving the renderer avoids Quest's context cap.
+    if (this.scene) {
+      this.scene.traverse(object => {
+        object.geometry?.dispose();
+        const mats = Array.isArray(object.material) ? object.material : object.material ? [object.material] : [];
+        for (const mat of mats) {
+          for (const value of Object.values(mat)) if (value?.isTexture) value.dispose();
+          mat.dispose();
+        }
+      });
+      this.scene.clear();
+    }
+    this.renderer?.renderLists?.dispose();
     this.renderer = null;
     this.session = null;
     this.refSpace = null;
@@ -178,6 +219,13 @@ export class XrHud {
   }
 
   _frame(t, frame) {
+    const t0 = frameBegin();
+    safe('xr frame', () => this._frameInner(t, frame));
+    if (this.renderer && this.scene && this.camera) safe('xr render', () => this.renderer.render(this.scene, this.camera));
+    frameEnd(t0, this.renderer);
+  }
+
+  _frameInner(t, frame) {
     if (!frame || !this.session) return;
     const pose = frame.getViewerPose(this.refSpace);
     if (!pose) {
@@ -318,6 +366,20 @@ export class XrHud {
     );
     status.headLocked = this._offsetFor(status, 0, -0.25, -0.7);
     status.alpha = 0.7;
+    const now = performance.now();
+    const offline = offlineText(hud.net, now);
+    if (offline) {
+      seen.add('offline');
+      const chip = this._mesh('offline', offline, drawOffline);
+      chip.headLocked = this._offsetFor(chip, 0, -0.21, -0.7);
+      chip.alpha = 0.85;
+    }
+    if (this.config.perf) {
+      if (due(this, 2, now, '_perfT')) this._perfLine = perfLine();
+      seen.add('perf');
+      const chip = this._mesh('perf', this._perfLine || '', drawPerf);
+      chip.headLocked = this._offsetFor(chip, -0.2, 0.26, -1.2);
+    }
 
     for (const [key, m] of this.meshes) {
       if (!seen.has(key)) {
@@ -355,17 +417,21 @@ export class XrHud {
             ["card:anchor", { ...anchor, target: anchor.mesh.position }],
           ])
         : new Map();
-      this.dev.frame(head, headQ, cards, this.config.cardDistance);
+      safe('xr dev', () => this.dev.frame(head, headQ, cards, this.config.cardDistance));
       for (const m of Object.values(this.dev.meshes))
         m.mesh.updateMatrixWorld();
       this.dev.pv?.mesh.updateMatrixWorld();
     }
-    this.vfx?.frame(this, head, headQ);
-    this._hover(frame, t);
+    safe('xr memory', () => this.mem?.frame(head, headQ, this.dev));
+    safe('xr vision', () => this.vfx?.frame(this, head, headQ));
+    safe('xr swarm', () => this.swarm?.frame(head, headQ));
+    const brainAnchor = this.meshes.get('detail:person') || this.meshes.get('label:' + selected) || [...this.meshes.values()].find(m => m.key.startsWith('label:'));
+    const brainCards = brainAnchor ? new Map([['card:anchor', { ...brainAnchor, target: brainAnchor.mesh.position }]]) : new Map();
+    safe('xr brain', () => this.brain?.frame(head, headQ, brainCards, this.dev));
+    safe('xr pointer', () => this._hover(frame, t));
     // Let Quest composite the real room through transparent pixels. A second
     // camera image cannot share the compositor's depth correction and pose.
     this.fluidGlass?.render(null, this.camera);
-    this.renderer.render(this.scene, this.camera);
   }
 
   _toolPanels(panels, seen) {
