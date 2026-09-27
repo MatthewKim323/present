@@ -58,3 +58,7 @@ Recall evidence (the block `memorable inject --scope personal:stephen` returned 
 ## GBrain
 
 QM workers get person context from the event payload plus a `gbrain_context` block the world service attaches; GBrain itself is not a QM connector (gbrain.io needs OAuth). Procedures flow the other way through the world service `/procedures` bridge.
+
+Workers also read GBrain directly through the world service's read-only proxy (`perception/gbrain_ops.py`, contract in `contracts/EVENTS.md`): `GET /gbrain/person/<id>`, `POST /gbrain/query`, `GET /gbrain/page/<slug>` at `http://host.docker.internal:8787`, bearer `$WORLD_HOOKS_SECRET`. The worker briefs in `deploy/worldhooks/world-hooks.json` (qm `worldhooks` branch) make Context read the person card and prior feedback/requests, Product query similar requests and `procedures/*` before speccing, and Builder pass Context's summary as `spec.context`. Every call shows on the HUD as a `gbrain_op` line with the worker as actor.
+
+Open gap: QM does not export host env into local sandbox commands, so `$WORLD_HOOKS_SECRET` is empty inside worker computers and the proxy answers 401 (the briefs then continue from the event alone). Fix is a small pass-through in QM (`src/sandbox/local-sandbox.ts`: merge host vars named in a `SANDBOX_PASSTHROUGH_ENV=WORLD_HOOKS_SECRET` list into the handle env) plus that line in `qm.env`, then restart QM. Not landed yet.

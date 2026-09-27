@@ -977,8 +977,10 @@ class GBrainIOSink:
 
     async def read_person(self, pid: str, *, actor: str, event_id: str | None = None) -> dict[str, Any]:
         """What the HUD card shows, plus what the relationship page knows (facts, recent, all open loops)."""
+        hit = self._person.get(pid)
+        cached = bool(hit) and time.time() - hit[0] < self.person_ttl_s
         ctx = await self.person_context(pid, actor=actor, event_id=event_id) or {}
-        if self.ops is not None:  # the card path is often a cache hit; a QM read still shows as a person read
+        if self.ops is not None and cached:  # served from cache: still show the QM read as a person read
             self.ops.publish(op_message("get_page", {"slug": f"people/{pid}"}, None, 0, True, actor=actor,
                                         event_id=event_id, wearer_id=self.wearer_id))
         st = self.rel.get(pid)
