@@ -79,7 +79,21 @@ export class XrHud {
       // Some Quest Browser builds reject the optional features (dom-overlay/hand-tracking): retry bare.
       console.warn('immersive-ar with optional features failed, retrying bare:', e);
       session = await navigator.xr.requestSession('immersive-ar', { optionalFeatures: ['local-floor', 'hand-tracking'] })
-        .catch(() => navigator.xr.requestSession('immersive-ar'));
+        .catch(() => navigator.xr.requestSession('immersive-ar'))
+        .catch(async (e2) => {
+          // AR refused outright: fall back to immersive-vr with the headset camera feed as the backdrop,
+          // so the HUD still sits over the real world (flat, not stereo passthrough).
+          console.warn('immersive-ar refused, falling back to immersive-vr + camera backdrop:', e2);
+          const s = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'hand-tracking'] });
+          const cam = document.getElementById('cam');
+          if (cam && cam.srcObject) {
+            const tex = new THREE.VideoTexture(cam);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            this.scene.background = tex;
+          }
+          this.vrFallback = true;
+          return s;
+        });
     }
     this.session = session;
     await renderer.xr.setSession(session);
