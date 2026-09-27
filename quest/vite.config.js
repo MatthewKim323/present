@@ -13,6 +13,8 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: true,
+    // ngrok (scripts/dev-up.sh --tunnel) keeps the public Host header; Vite blocks unknown hosts without this.
+    allowedHosts: ['.ngrok-free.app', '.ngrok-free.dev', '.ngrok.app', '.ngrok.dev', '.ngrok.io'],
     proxy: {
       '/qm': { target: WORLD, changeOrigin: true },
       '/ws': { target: WORLD, ws: true, changeOrigin: true },
@@ -23,7 +25,7 @@ export default defineConfig({
       '/events': { target: WORLD, changeOrigin: true },
       '/builder': { target: WORLD, changeOrigin: true },
       '/people': { target: WORLD, changeOrigin: true },
-      '/health': { target: WORLD, changeOrigin: true },
+      '/health': { target: WORLD, changeOrigin: true }, // ?diag=1 checks the world service through the same origin
       '/procedures': { target: WORLD, changeOrigin: true },
       '/debug': { target: WORLD, changeOrigin: true },
     },

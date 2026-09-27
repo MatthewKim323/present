@@ -20,12 +20,14 @@ def make_app(tmp_path):
     x = Extractor(client=None)
     x.client = None
     svc = WorldService(s, load_models=False, transcriber=NullTranscriber(), extractor=x)
+    svc.procfeed.dir, svc.procfeed.index_path = tmp_path / "procedures", tmp_path / "procedure_library.json"
     return svc, create_app(svc)
 
 
 def test_post_event_fans_out_to_hud(tmp_path):
     svc, app = make_app(tmp_path)
     with TestClient(app) as c, c.websocket_connect("/ws/hud") as hud:
+        assert hud.receive_json() == {"kind": "procedure_library", "items": []}  # sent on connect
         r = c.post("/events", json={"type": "customer_feedback.detected", "people": [{"id": "matthew", "name": "Matthew", "enrolled": True}],
                                     "payload": {"product": "Opal", "feature": "Landing page", "sentiment": "neg", "feedback": "unclear payouts"}})
         assert r.status_code == 200
@@ -42,10 +44,12 @@ def test_post_event_fans_out_to_hud(tmp_path):
 
 
 def test_post_event_rejects_bad_type(tmp_path):
-    _, app = make_app(tmp_path)
+    svc, app = make_app(tmp_path)
     with TestClient(app) as c:
         assert c.post("/events", json={"type": "nope"}).status_code == 422
         assert c.post("/hud", json={"kind": "agent_activity", "hook": "x", "workers": []}).status_code == 200
+        assert "x" in svc.devfeed.swarms  # QM lanes feed the merged qm_swarm panel
+        assert c.post("/hud", json={"kind": "dev_session"}).status_code == 422
 
 
 def test_debug_utterance_and_end(tmp_path):

@@ -1,10 +1,11 @@
-"""Dev cockpit feed: GitHub + live Claude Code session state for the HUD (contracts/EVENTS.md, dev_github / dev_session).
+"""Dev cockpit feed: GitHub + the QM swarm for the HUD (contracts/EVENTS.md, dev_github / qm_swarm).
 
   Builder jobs (builder.py) + `gh` polling -> dev_github snapshot (open [WORLD] PRs: checks, +/-, files, preview, top hunk)
-  StreamParser tool events (tapped via builder.TOOL_TAPS) -> dev_session snapshot (step, tool tail, elapsed, procedure)
+  QM tracker agent_activity (POST /hud -> on_hud) + Builder job state + StreamParser tool events (builder.TOOL_TAPS)
+    -> qm_swarm snapshot: one lane per worker, the Builder lane carries the Claude Code tool tail, recalled/learned procedure
   Quest dev_action {approve|comment|open_preview} -> gh against the Builder repo only, for listed PRs only. Never merges.
 
-All GitHub / Claude access stays here; the Quest only ever sees these snapshots.
+All GitHub access stays here; the Quest only ever sees these snapshots.
 No network in tests: `gh` is injectable (see tests/test_devfeed.py).
 """
 from __future__ import annotations
@@ -32,6 +33,18 @@ ACTIVE = ("queued", "running", "pr_open")
 LOCKFILES = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "bun.lock", "uv.lock", "Cargo.lock")
 CANNED_COMMENT = "Checked this with the customer in person, looks right. Captured by WORLD."
 PR_FIELDS = "number,title,headRefName,headRefOid,isDraft,additions,deletions,files,statusCheckRollup,url,createdAt"
+LANE_STATES = ("running", "done", "failed")
+LANE_OF_JOB = {"queued": "running", "running": "running", "pr_open": "running", "done": "done", "failed": "failed"}
+TAIL_N = 6  # Builder tool calls shown in its lane
+MERGE_WINDOW_S = 60.0  # a Builder job created this soon before a QM swarm started still belongs to it
+SWARM_RESTART_S = 15.0  # a settled QM swarm that goes running again after this long is a new run (no event_id on the wire)
+
+
+def parse_procedure(detail: str) -> dict[str, Any]:
+    """memory_event detail "<title> · <n> steps" -> {title, steps}. steps is None when the detail has no count."""
+    parts = [p.strip() for p in detail.split("·")]
+    m = re.match(r"(\d+)\s+steps?$", parts[-1]) if len(parts) > 1 else None
+    return {"title": parts[0] or None, "steps": int(m.group(1)) if m else None}
 
 
 async def gh_cli(*args: str) -> tuple[int, str]:
@@ -127,46 +140,129 @@ class DevFeed:
         self.all_prs = os.environ.get("DEVFEED_ALL_PRS", "0") in ("1", "true")  # demo: show non-[WORLD] PRs too
         self.tails: dict[str, deque] = {}
         self.finished_at: dict[str, float] = {}
+        self.swarms: dict[str, dict[str, Any]] = {}  # hook -> latest QM swarm state (see on_hud)
+        self._latest_hook: str | None = None
         self.github: dict[str, Any] | None = None
         self._hunks: dict[str, tuple[str | None, list]] = {}  # head sha -> hunk
         self._previews: dict[str, str] = {}  # head sha -> preview url (only cached once ready)
         self._last_sent: dict[str, str] = {}
         self._last_sent_t: dict[str, float] = {}
+        self.reset_at = 0.0  # director "Reset HUD": settled jobs from before this stop filling the panel
         builder_mod.TOOL_TAPS.append(self.on_tool)
+
+    def reset(self) -> None:
+        """Forget QM swarm lanes and settled Builder jobs for the panel (a running job still shows)."""
+        self.swarms.clear()
+        self._latest_hook = None
+        self._last_sent.clear()
+        self.reset_at = time.time()
 
     def close(self) -> None:
         if self.on_tool in builder_mod.TOOL_TAPS:
             builder_mod.TOOL_TAPS.remove(self.on_tool)
 
-    # ------------------------------------------------------------ session
+    # ------------------------------------------------------------ QM swarm
 
     def on_tool(self, job_id: str, tool: str, inp: dict[str, Any]) -> None:
         self.tails.setdefault(job_id, deque(maxlen=10)).append({"tool": tool, "target": short_target(tool, inp)})
 
+    def on_hud(self, msg: dict[str, Any]) -> None:
+        """Messages QM's swarm tracker POSTs to /hud: agent_activity (worker lanes) and recall/learn memory_events."""
+        kind, now = msg.get("kind"), time.time()
+        if kind == "agent_activity" and msg.get("hook") and not msg.get("job_id"):  # job_id = the Builder's own broadcast
+            hook, eid = str(msg["hook"]), msg.get("event_id")
+            workers = [{"name": str(w.get("name") or "Worker")[:24], "state": w.get("state") if w.get("state") in LANE_STATES else "running",
+                        **({"note": str(w["note"])[:120]} if w.get("note") else {})}
+                       for w in msg.get("workers") or [] if isinstance(w, dict)]
+            sw = self.swarms.get(hook)
+            settled = sw is not None and all(w["state"] != "running" for w in sw["workers"])
+            restarted = settled and any(w["state"] == "running" for w in workers) and now - sw["t"] > SWARM_RESTART_S
+            if sw is None or (eid and sw.get("event_id") and eid != sw["event_id"]) or (not eid and restarted):
+                sw = self.swarms[hook] = {"hook": hook, "event_id": None, "anchor_track_id": None, "started": now,
+                                          "workers": [], "recalled": None, "learned": None}
+            sw["event_id"] = eid or sw["event_id"]
+            if msg.get("anchor_track_id") is not None:
+                sw["anchor_track_id"] = msg["anchor_track_id"]
+            sw["workers"], sw["t"] = workers, now
+            self._latest_hook = hook
+        elif kind == "memory_event":
+            text = str(msg.get("text") or "").upper()
+            slot = {"RECALLED PROCEDURE": "recalled", "PROCEDURE LEARNED": "learned"}.get(text)
+            eid, hook = msg.get("event_id"), msg.get("hook")
+            # QM's tracker tags recall/learn with the run's event_id: land it on exactly that swarm.
+            sw = next((x for x in self.swarms.values() if eid and x.get("event_id") == eid), None)
+            if sw is None and not eid:
+                sw = self.swarms.get(str(hook)) if hook else self.swarms.get(self._latest_hook)
+            if slot and sw is not None:
+                sw[slot] = parse_procedure(str(msg.get("detail") or ""))
+
     def _job(self):
-        jobs = list(self.builder.jobs.values())
+        jobs = [j for j in self.builder.jobs.values() if j.created >= self.reset_at or j.state in ACTIVE]
         if not jobs:
             return None
         active = [j for j in jobs if j.state in ACTIVE]
         return max(active or jobs, key=lambda j: j.created)
 
-    def session_msg(self) -> dict[str, Any] | None:
-        j = self._job()
-        if j is None:
-            return None
+    def builder_lane(self, j) -> dict[str, Any]:
         if j.state not in ACTIVE:
             self.finished_at.setdefault(j.id, time.time())
         end = self.finished_at.get(j.id, time.time())
-        proc = None
-        if j.recalled:
-            proc = {"title": j.recalled.get("title"), "steps": len(j.recalled.get("steps") or []), "score": j.recalled.get("score")}
-        return {"kind": "dev_session", "job_id": j.id, "feature": j.feature, "state": j.state, "mode": j.mode,
-                "step": j.note, "tail": list(self.tails.get(j.id, [])), "elapsed_s": int(end - j.created),
-                "procedure": proc, "session_url": j.session_url, "pr": j.pr_number}
+        lane: dict[str, Any] = {"name": builder_mod.WORKER, "state": LANE_OF_JOB.get(j.state, "running"), "note": j.note,
+                                "tail": list(self.tails.get(j.id, []))[-TAIL_N:], "elapsed_s": int(end - j.created)}
+        if j.pr_number:
+            lane["pr"] = j.pr_number
+        if j.pr_url:
+            lane["pr_url"] = j.pr_url
+        if j.preview_url:
+            lane["url"] = j.preview_url
+        return lane
+
+    def swarm_msg(self) -> dict[str, Any] | None:
+        """One qm_swarm snapshot: the newest QM swarm (lanes from QM's tracker) merged with the Builder job it spawned
+        (state + tool tail + Memorable recall from builder.py). No QM running = the Builder lane on its own."""
+        qm = max(self.swarms.values(), key=lambda s: s["t"]) if self.swarms else None
+        j = self._job()
+        if qm and j:
+            if qm.get("event_id") and j.event_id:
+                merge = qm["event_id"] == j.event_id
+            else:
+                merge = qm["hook"] == builder_mod.HOOK and j.created >= qm["started"] - MERGE_WINDOW_S
+            if not merge and j.created > qm["t"]:
+                qm = None  # a newer direct (BUILDER_AUTO) job wins the panel
+            elif not merge:
+                j = None
+        if qm is None and j is None:
+            return None
+        workers = [dict(w) for w in (qm["workers"] if qm else [])]
+        recalled, learned = (qm["recalled"], qm["learned"]) if qm else (None, None)
+        if j is not None:
+            lane = self.builder_lane(j)
+            i = next((k for k, w in enumerate(workers) if w["name"].lower() == lane["name"].lower()), None)
+            if i is None:
+                workers.append(lane)
+            else:
+                workers[i] = lane
+            if j.recalled:
+                recalled = {"title": j.recalled.get("title"), "steps": len(j.recalled.get("steps") or [])}
+            if (j.procedure or {}).get("stored"):
+                learned = {"title": j.procedure.get("title"), "steps": j.procedure.get("steps")}
+        msg: dict[str, Any] = {
+            "kind": "qm_swarm", "hook": qm["hook"] if qm else builder_mod.HOOK,
+            "event_id": (qm or {}).get("event_id") or (j.event_id if j else None),
+            "anchor_track_id": (qm or {}).get("anchor_track_id") if (qm or {}).get("anchor_track_id") is not None
+            else (j.anchor_track_id if j else None),
+            "workers": workers,
+        }
+        if recalled:
+            msg["recalled"] = recalled
+        if learned:
+            msg["learned"] = learned
+        return msg
 
     def active(self) -> bool:
         now = time.time()
-        return any(j.state in ACTIVE or now - self.finished_at.get(j.id, now) < 300 for j in self.builder.jobs.values())
+        return (any(j.state in ACTIVE or now - self.finished_at.get(j.id, now) < 300 for j in self.builder.jobs.values())
+                or any(now - s["t"] < 300 for s in self.swarms.values()))
 
     # ------------------------------------------------------------ github
 
@@ -254,7 +350,7 @@ class DevFeed:
                     await self.poll_github()
                     next_gh = time.time() + (self.active_poll_s if act else self.idle_poll_s)
                 was_active = act
-                await self._send(self.session_msg())
+                await self._send(self.swarm_msg())
                 if self.github is not None:
                     await self._send(self.github)
             except Exception:  # noqa: BLE001

@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WORLD Director</title>
+<style>
+  :root { --bg:#0b0c0e; --panel:#131519; --line:#23262d; --fg:#e6e8eb; --dim:#8a9099; --acc:#7ce0c3; --warn:#f2c14e; --bad:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header { display:flex; gap:12px; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header b { letter-spacing:.12em; }
+  header .pill { padding:2px 8px; border:1px solid var(--line); border-radius:99px; color:var(--dim); }
+  header .ok { color:var(--acc); border-color:#2c5a4d; } header .no { color:var(--bad); border-color:#5a2c2c; }
+  main { display:grid; grid-template-columns: minmax(260px, 340px) 1fr; gap:16px; padding:16px; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; min-width:0; }
+  h2 { margin:0 0 10px; font-size:11px; letter-spacing:.14em; color:var(--dim); font-weight:600; }
+  button { display:block; width:100%; text-align:left; margin:0 0 8px; padding:11px 12px; background:#191c21; color:var(--fg);
+           border:1px solid var(--line); border-radius:8px; font:inherit; cursor:pointer; }
+  button:hover { border-color:#3a3f48; } button:active { transform:translateY(1px); }
+  button small { display:block; color:var(--dim); margin-top:2px; }
+  button.busy { opacity:.55; } button.done { border-color:#2c5a4d; } button.err { border-color:#5a2c2c; }
+  button.reset { color:var(--warn); }
+  .n { color:var(--dim); margin-right:8px; }
+  #out { white-space:pre-wrap; color:var(--dim); min-height:3em; word-break:break-word; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+  @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+  ol { list-style:none; margin:0; padding:0; }
+  li { padding:3px 0; border-bottom:1px solid #1a1d22; display:flex; gap:8px; min-width:0; }
+  li .k { color:var(--acc); flex:0 0 118px; overflow:hidden; text-overflow:ellipsis; }
+  li .x { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  li .t { color:var(--dim); flex:0 0 58px; }
+  .lane { display:flex; gap:8px; padding:4px 0; }
+  .lane .s { flex:0 0 64px; } .running { color:var(--warn); } .done { color:var(--acc); } .failed { color:var(--bad); }
+  .muted { color:var(--dim); }
+  a { color:var(--acc); }
+</style>
+</head>
+<body>
+<header>
+  <b>WORLD · DIRECTOR</b>
+  <span id="conn" class="pill">connecting</span>
+  <span id="qm" class="pill">qm ?</span>
+  <span id="gb" class="pill">gbrain ?</span>
+  <span id="hud" class="pill">hud 0</span>
+  <span id="enr" class="pill">enrolled ?</span>
+</header>
+<main>
+  <section>
+    <h2>TAKE</h2>
+    <button data-a="intro"><span class="n">1</span>Matthew: "I'm Matthew"<small>intro enroll (needs his face in view, not enrolled)</small></button>
+    <button data-a="recognized"><span class="n">2</span>Matthew recognized<small>person.encountered + person card</small></button>
+    <button data-a="facts"><span class="n">3</span>Live facts<small>relationship.updated, 3 context deltas</small></button>
+    <button data-a="recap"><span class="n">4</span>Matthew asks for !recap<small>feature_request.detected to QM (run 1)</small></button>
+    <button data-a="streak"><span class="n">5</span>Matthew asks for !streak<small>feature_request.detected to QM (run 2, recall)</small></button>
+    <button data-a="watch"><span class="n">6</span>Watch: next time Matthew mentions pricing<small>world.watch_requested</small></button>
+    <button data-a="reset" class="reset"><span class="n">0</span>Reset HUD<small>clear cards, toasts, swarm panel</small></button>
+    <h2 style="margin-top:14px">LAST ACTION</h2>
+    <div id="out">nothing yet</div>
+  </section>
+  <div class="grid">
+    <section>
+      <h2>QM SWARM</h2>
+      <div id="swarm" class="muted">no swarm yet</div>
+      <h2 style="margin-top:14px">BUILDER</h2>
+      <div id="jobs" class="muted">no jobs</div>
+      <h2 style="margin-top:14px">COUNTS</h2>
+      <div id="counts" class="muted"></div>
+    </section>
+    <section>
+      <h2>HUD (LAST 30)</h2>
+      <ol id="recent"></ol>
+    </section>
+  </div>
+</main>
+<script>
+const q = new URLSearchParams(location.search);
+try { if (q.get('token')) { localStorage.setItem('director_token', q.get('token')); history.replaceState(null, '', location.pathname); } } catch (e) {}
+let TOKEN = ''; try { TOKEN = localStorage.getItem('director_token') || ''; } catch (e) {}
+const H = () => (TOKEN ? { authorization: 'Bearer ' + TOKEN } : {});
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const hhmmss = (t) => new Date(t * 1000).toLocaleTimeString([], { hour12: false });
+
+document.querySelectorAll('button[data-a]').forEach((b) => b.addEventListener('click', async () => {
+  const a = b.dataset.a;
+  if (a === 'reset' && !confirm('Clear the HUD?')) return;
+  b.className = b.className.replace(/\b(busy|done|err)\b/g, '').trim() + ' busy';
+  try {
+    const r = await fetch('/director/api/action', { method: 'POST', headers: { 'content-type': 'application/json', ...H() }, body: JSON.stringify({ action: a }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) throw new Error('401: open /director?token=<WORLD_HOOKS_SECRET or DIRECTOR_TOKEN>');
+    if (!r.ok) throw new Error(r.status + ' ' + (j.detail || ''));
+    $('out').textContent = hhmmss(Date.now() / 1000) + '  ' + a + '\n' + JSON.stringify(j, null, 1);
+    b.className = b.className.replace('busy', 'done');
+  } catch (e) {
+    $('out').textContent = 'FAILED ' + a + ': ' + e.message;
+    b.className = b.className.replace('busy', 'err');
+  }
+}));
+
+function pill(el, ok, text) { el.textContent = text; el.className = 'pill ' + (ok ? 'ok' : 'no'); }
+
+async function tick() {
+  try {
+    const r = await fetch('/director/api/status', { headers: H() });
+    if (r.status === 401) { pill($('conn'), false, 'bad token'); return; }
+    const s = await r.json();
+    pill($('conn'), true, 'live');
+    pill($('qm'), !!s.qm_url, s.qm_url ? 'qm ' + s.qm_url.replace(/^https?:\/\//, '') : 'qm off' + (s.builder_auto ? ' (builder auto)' : ''));
+    const g = s.gbrain || {};
+    pill($('gb'), g.backend !== 'stub', 'gbrain ' + (g.backend || '?') + ' · ops ' + s.gbrain_ops);
+    pill($('hud'), s.hud_clients > 0, 'hud clients ' + s.hud_clients);
+    pill($('enr'), true, 'enrolled ' + ((s.enrolled || []).join(',') || 'none') + ' · tracks ' + (s.tracks || []).length);
+    const sw = s.swarm;
+    $('swarm').innerHTML = sw ? '<div class="muted">' + esc(sw.hook) + (sw.recalled ? ' · recalled ' + esc(sw.recalled.title) : '') + (sw.learned ? ' · learned ' + esc(sw.learned.title) : '') + '</div>' +
+      (sw.workers || []).map((w) => '<div class="lane"><span class="s ' + esc(w.state) + '">' + esc(w.state) + '</span><span><b>' + esc(w.name) + '</b> ' + esc(w.note || '') +
+        (w.pr_url ? ' <a target="_blank" href="' + esc(w.pr_url) + '">#' + esc(w.pr) + '</a>' : '') + '</span></div>').join('') : 'no swarm yet';
+    $('jobs').innerHTML = (s.jobs || []).length ? s.jobs.map((j) => '<div class="lane"><span class="s ' + (j.state === 'done' ? 'done' : j.state === 'failed' ? 'failed' : 'running') + '">' + esc(j.state) + '</span><span><b>' + esc(j.feature) + '</b> ' +
+      esc(j.elapsed_s) + 's · ' + esc(j.note) + (j.pr_url ? ' <a target="_blank" href="' + esc(j.pr_url) + '">#' + esc(j.pr) + '</a>' : '') + '</span></div>').join('') : 'no jobs';
+    $('counts').textContent = Object.entries(s.counts || {}).map(([k, v]) => k + ' ' + v).join(' · ') || 'nothing broadcast yet';
+    $('recent').innerHTML = (s.recent || []).map((m) => '<li><span class="t">' + hhmmss(m.t) + '</span><span class="k">' + esc(m.kind) + (m.n ? ' x' + m.n : '') + '</span><span class="x" title="' + esc(m.text) + '">' + esc(m.text) + '</span></li>').join('');
+  } catch (e) {
+    pill($('conn'), false, 'world service down');
+  }
+}
+tick(); setInterval(tick, 1000);
+</script>
+</body>
+</html>

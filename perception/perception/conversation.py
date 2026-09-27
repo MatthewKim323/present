@@ -90,6 +90,14 @@ class ConversationManager:
             return [self._close()]
         return []
 
+    def drop_utterance(self, u: Utterance) -> bool:
+        """Remove an utterance that was not conversation (e.g. the wearer arming a watch)."""
+        cur = self.current
+        if cur is None or u not in cur.utterances:
+            return False
+        cur.utterances.remove(u)
+        return True
+
     def force_end(self) -> list[Encounter]:
         return [self._close()] if self.current else []
 

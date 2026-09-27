@@ -5,6 +5,11 @@ import * as THREE from "three";
 import { FluidGlassPass } from "./fluid-glass-pass.js";
 import { XrPointers } from "./xr-pointers.js";
 import { XrDev, deltasAnimating } from "./devpanels.js";
+import { XrVision } from "./visionfx.js";
+import { XrSwarm } from "./swarmviz.js";
+import { XrBrain } from "./brainpanel.js";
+import { XrMemory } from "./memorypanel.js";
+import { safe, frameBegin, frameEnd, perfLine, drawPerf, drawOffline, offlineText, due } from "./perf.js";
 import {
   drawPersonLabel,
   drawMemoryToast,
@@ -19,6 +24,35 @@ const M_PER_PX = 0.0012;
 const VIEWS = ["person", "memories", "agents"];
 const EMPTY_ACTIVITY = { workers: [] };
 const DOCK_Y = -0.23;
+
+// One renderer (one WebGL context) for the page's lifetime. A new one per AR entry leaked a context each
+// time; browsers cap live contexts (~16) and Quest Browser loses the oldest, so re-entering AR would die.
+let sharedRenderer = null;
+function getRenderer(config) {
+  if (sharedRenderer) return sharedRenderer;
+  const renderer = new THREE.WebGLRenderer({ antialias: !config.lite, alpha: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(devicePixelRatio);
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 0);
+  renderer.xr.enabled = true;
+  renderer.xr.setReferenceSpaceType('local');
+  if (config.lite) renderer.xr.setFramebufferScaleFactor(0.85); // fewer pixels per eye; must be set before setSession
+  return (sharedRenderer = renderer);
+}
+
+// Free every GPU resource under obj (geometry, material, textures) and detach it.
+export function disposeTree(obj) {
+  obj.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const m of mats) {
+      for (const v of Object.values(m)) if (v && v.isTexture) v.dispose();
+      if (m.uniforms) for (const u of Object.values(m.uniforms)) if (u.value && u.value.isTexture) u.value.dispose();
+      m.dispose();
+    }
+  });
+  obj.clear();
+}
 
 export class XrHud {
   constructor({
@@ -70,16 +104,8 @@ export class XrHud {
 
   async start() {
     try {
-      const renderer = new THREE.WebGLRenderer({
-        antialias: true,
-        alpha: true,
-      });
+      const renderer = getRenderer(this.config);
       this.renderer = renderer;
-      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-      renderer.setSize(innerWidth, innerHeight);
-      renderer.setClearColor(0x000000, 0);
-      renderer.xr.enabled = true;
-      renderer.xr.setReferenceSpaceType("local");
       this.scene = new THREE.Scene();
       this.camera = new THREE.PerspectiveCamera(
         70,
@@ -94,6 +120,9 @@ export class XrHud {
       this.session = session;
       session.addEventListener("end", this._end);
       await renderer.xr.setSession(session);
+      if (this.config.hz && session.updateTargetFrameRate &&
+          [...(session.supportedFrameRates || [])].includes(this.config.hz))
+        session.updateTargetFrameRate(this.config.hz).catch(() => {});
       const fluidGlass = await FluidGlassPass.create(renderer, this.scene, {
         nativePassthrough: true,
       });
@@ -104,6 +133,10 @@ export class XrHud {
       this.fluidGlass = fluidGlass;
       this.refSpace = renderer.xr.getReferenceSpace();
       this._initDev();
+      this.vfx = new XrVision(this.scene, this.hud);
+      this.swarm = new XrSwarm(this.scene, this);
+      this.brain = new XrBrain(this.scene, this.hud);
+      this.mem = new XrMemory(this.scene, this.hud);
       session.addEventListener("select", this._select);
       this._createCursor();
       renderer.setAnimationLoop((t, frame) => this._frame(t, frame));
@@ -138,6 +171,7 @@ export class XrHud {
   }
 
   _dispose() {
+    this.info();
     for (const [type, listener] of this._devListeners || [])
       this.session?.removeEventListener(type, listener);
     this._devListeners = [];
@@ -162,14 +196,40 @@ export class XrHud {
       this.cursor.material.dispose();
       this.cursor = null;
     }
-    this.renderer?.dispose();
+    if (this.scene) safe("xr dispose", () => disposeTree(this.scene));
+    this.renderer?.renderLists?.dispose?.();
     this.renderer = null;
     this.session = null;
     this.refSpace = null;
     this.focused = null;
+    this.vfx = null;
+    this.swarm = null;
+    this.brain = null;
+    this.mem = null;
   }
 
+  // What the session actually got, for ?diag=1.
+  info() {
+    const s = this.session;
+    if (!s) return this._info || null;
+    return (this._info = {
+      features: [...(s.enabledFeatures || ['(enabledFeatures n/a)'])],
+      frameRate: s.frameRate != null ? Math.round(s.frameRate) : null,
+      rates: [...(s.supportedFrameRates || [])],
+      blend: s.environmentBlendMode || '?',
+      fbScale: this.config.lite ? 0.85 : 1,
+    });
+  }
+
+  // Never let one bad frame (or one bad layer) end the loop: three.js stops scheduling frames if this throws.
   _frame(t, frame) {
+    const started = frameBegin();
+    safe("xr frame", () => this._frameInner(t, frame));
+    if (frame && this.session) safe("xr render", () => this.renderer.render(this.scene, this.camera));
+    frameEnd(started, this.renderer);
+  }
+
+  _frameInner(t, frame) {
     if (!frame || !this.session) return;
     const pose = frame.getViewerPose(this.refSpace);
     if (!pose) {
@@ -308,6 +368,20 @@ export class XrHud {
     );
     status.headLocked = this._offsetFor(status, 0, -0.25, -0.7);
     status.alpha = 0.7;
+    const offline = offlineText(hud.net, t);
+    if (offline) {
+      seen.add("offline");
+      const chip = this._mesh("offline", offline, drawOffline);
+      chip.headLocked = this._offsetFor(chip, 0, -0.32, -0.8);
+      chip.alpha = 0.85;
+    }
+    if (this.config.perf) {
+      if (due(this, 2, t, "_perfT")) this._perfLine = perfLine();
+      seen.add("perf");
+      const chip = this._mesh("perf", this._perfLine || "", drawPerf);
+      chip.headLocked = this._offsetFor(chip, -0.2, 0.26, -1.2);
+      chip.alpha = 0.8;
+    }
 
     for (const [key, m] of this.meshes) {
       if (!seen.has(key)) {
@@ -352,9 +426,12 @@ export class XrHud {
         m.mesh.updateMatrixWorld();
       this.dev.pv?.mesh.updateMatrixWorld();
     }
+    safe("xr memory", () => this.mem?.frame(head, headQ, this.dev));
+    safe("xr vision", () => this.vfx?.frame(this, head, headQ));
+    safe("xr swarm", () => this.swarm?.frame(head, headQ));
+    safe("xr brain", () => this.brain?.frame(head, headQ, this.meshes, this.dev));
     this._hover(frame, t);
     this.fluidGlass?.render(null, this.camera);
-    this.renderer.render(this.scene, this.camera);
   }
 
   _toolPanels(panels, seen) {

@@ -3,7 +3,8 @@
   ws  /ws/quest   Quest (or desktop sim) streams frames/audio/gesture/label; receives HUD messages
   ws  /ws/hud     any HUD client; receives HUD messages
   POST /events    inject a WorldEvent (demo scripts, tests)
-  POST /hud       push a raw HUD message (e.g. QM agent_activity) to every HUD client
+  POST /hud       push a raw HUD message (e.g. QM agent_activity, watch_fired) to every HUD client
+  POST /gbrain/query, GET /gbrain/page/{slug}, GET /gbrain/person/{id}   read-only GBrain for QM workers (bearer)
   GET  /health    status + latency numbers
   debug: POST /debug/utterance, POST /debug/end-conversation, GET /people
 """
@@ -34,7 +35,13 @@ from .qm_routes import add_qm_routes
 from .sinks import FanOut, HudSink, QMSink, StubGBrainSink
 from .builder import Builder, BuilderConfig, BuilderSink, add_builder_routes
 from .devfeed import DevFeed
+from .procfeed import ProcFeed, add_procedure_routes
+from .gbrain_ops import GBrainOpFeed, add_gbrain_routes
 from .vision import VisionPipeline
+from .intro import IntroEnroller
+from .visionfx import VisionFx
+from .director import add_director_routes
+from .watches import PinchAdopter, WatchBoard, WatchRequester, add_watch_routes
 
 log = logging.getLogger("world")
 
@@ -46,6 +53,7 @@ class Hub:
         self.clients: set[WebSocket] = set()
         self._state: dict[str, tuple[float, str]] = {}
         self._lock = asyncio.Lock()
+        self.taps: list[Any] = []  # sync callables seeing every HUD message (director.py keeps its recent log)
 
     async def replay(self, ws: WebSocket) -> None:
         """Restore bounded cockpit state, never replay actions or transient toasts."""
@@ -58,12 +66,17 @@ class Hub:
                     await ws.send_text(data)
 
     async def broadcast(self, msg: dict[str, Any]) -> None:
+        for tap in self.taps:
+            try:
+                tap(msg)
+            except Exception:  # noqa: BLE001
+                log.exception("hud tap failed")
         data = json.dumps(msg)
         async with self._lock:
             kind = msg.get("kind")
             if kind == "clear":
                 self._state.clear()
-            elif kind in {"dev_github", "dev_session", "preview_shot", "agent_activity"}:
+            elif kind in {"dev_github", "dev_session", "preview_shot", "agent_activity", "qm_swarm", "armed_watches"}:
                 # Latest snapshot of each cockpit view; preview JPEG count is bounded to one.
                 self._state[kind] = (time.monotonic(), data)
             dead = []
@@ -94,16 +107,28 @@ class WorldService:
         self.panels = PanelStore(self.hub.broadcast)
         self.debug_clients: set[WebSocket] = set()
         self.gbrain = self._make_gbrain(StubGBrainSink(self.s.events_log_path, people_meta=self._people_meta))
+        self.gbrain_ops = GBrainOpFeed(self.hub.broadcast)  # gbrain_op HUD lines, coalesced, <= ~5/s
+        if hasattr(self.gbrain, "ops"):
+            self.gbrain.ops = self.gbrain_ops
         self.qm = QMSink(self.s.qm_url)
         self.hud = HudSink(self.hub.broadcast, gbrain=self.gbrain)
-        self.builder = Builder(BuilderConfig.from_env(), self.hub.broadcast, anchor=self._track_for, on_procedure=self.on_procedure)
-        self.fanout = FanOut([self.gbrain, self.qm, self.hud, BuilderSink(self.builder)])
-        self.devfeed = DevFeed(self.builder, self.hub.broadcast)  # dev cockpit: dev_github / dev_session HUD
+        bcfg = BuilderConfig.from_env()
+        self.procfeed = ProcFeed(self.hub.broadcast, bcfg.procedures_dir)  # Memorable phases + library on the HUD (procfeed.py)
+        self.builder = Builder(bcfg, self.hub.broadcast, anchor=self._track_for, on_procedure=self.on_procedure, procfeed=self.procfeed)
+        self.watchboard = WatchBoard(self.hub.broadcast)  # spoken watches + pinch-adopted agents (watches.py)
+        self.qm.on_response, self.hud.agent_for = self.watchboard.on_qm_response, self.watchboard.agent_for
+        self.fanout = FanOut([self.gbrain, self.qm, self.hud, BuilderSink(self.builder), self.watchboard])
+        self.devfeed = DevFeed(self.builder, self.hub.broadcast)  # dev cockpit: dev_github / qm_swarm HUD
         self.conv = ConversationManager(self.s.conv_gap_s, self.s.leave_grace_s)
+        self.visionfx = VisionFx(self)  # vision / face_capture overlay feed (visionfx.py)
+        self.intro = IntroEnroller(self.vision, self.s.wearer_name, self.s.wearer_id)  # "I'm Matthew" = opt-in (intro.py)
         self.extractor = extractor or Extractor(self.s.anthropic_model, self.s.wearer_id, self.s.wearer_name)
         self.live = RollingExtractor(self.emit, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name,
                                      known=getattr(self.gbrain, "known_facts", None), client=False)
         self.live.client = self.extractor.client  # live passes only when extraction is enabled
+        self.watch_req = WatchRequester(self.emit, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name,
+                                        people=lambda: {pid: p.name for pid, p in self.store.people.items()}, client=self.live.client)
+        self.pinch = PinchAdopter(self.emit, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name)
         self.transcriber: Transcriber | None = transcriber
         self.vad = EnergyVAD(16000)
         self.source = "quest3s"
@@ -159,6 +184,7 @@ class WorldService:
         ]
         if os.environ.get("DEVFEED", "1") != "0":
             self._tasks.append(asyncio.create_task(self.devfeed.loop()))
+        self._tasks.append(asyncio.create_task(self.procfeed.send_library()))
         if hasattr(self.gbrain, "warm"):
             self._tasks.append(asyncio.create_task(self.gbrain.warm(sorted(self.store.people))))
         if self.transcriber is None:
@@ -168,6 +194,7 @@ class WorldService:
         for t in self._tasks:
             t.cancel()
         self.devfeed.close()
+        self.procfeed.close()
         if self.builder.preview:
             self.builder.preview.stop()
 
@@ -204,6 +231,7 @@ class WorldService:
         if kind == "frame":
             self.frames_in += 1
             self._latest_frame = (base64.b64decode(msg["jpeg_b64"]), float(msg.get("ts") or time.time()))
+            self.debug_jpeg = self._latest_frame[0]  # RAM only, overwritten every frame, never written to disk
             self._frame_event.set()
         elif kind == "audio":
             pcm = pcm16_to_float(base64.b64decode(msg["pcm16_b64"]))
@@ -218,10 +246,15 @@ class WorldService:
         elif kind == "gesture":
             t = self.vision.tracker.tracks.get(int(msg.get("target_track_id") or -1))
             log.info("gesture %s on track %s", msg.get("type"), msg.get("target_track_id"))
+            if msg.get("type") == "pinch" and t is not None:
+                await self.pinch.on_pinch(t)  # recognized person -> world.entity_adopted
             if t is not None and t.label:
                 await self.hub.broadcast(await self.hud.person_card(self.vision._encounter_event(t)))
         elif kind == "dev_action":
             await self.devfeed.handle_action(msg)
+        elif kind == "ping":  # Quest link keepalive + RTT (?diag=1); echo the client's clock back
+            if ws is not None:
+                await ws.send_text(json.dumps({"kind": "pong", "t": msg.get("t")}))
         else:
             log.debug("ignoring message kind %r", kind)
 
@@ -260,6 +293,7 @@ class WorldService:
                         await ws.send_text(dbg)
                     except Exception:  # noqa: BLE001
                         self.debug_clients.discard(ws)
+            await self.visionfx.after_frame(res)
 
     def _process_frame(self, data: bytes, ts: float):
         frame = decode_jpeg(data)
@@ -293,9 +327,12 @@ class WorldService:
             pid, name, tid = partner[0], partner[1], None
         else:
             pid, name, tid = (t.person_id, t.label, t.track_id) if t else (None, None, None)
+        self.intro.on_utterance(u)
         closed = self.conv.add_utterance(u, pid, name, tid)
         for enc in closed:
             asyncio.create_task(self._finish_encounter(enc))
+        if await self.watch_req.on_utterance(u, (pid, name), tid):  # wearer's standing instruction (regex prefilter, then haiku)
+            self.conv.drop_utterance(u)  # said to the AI, not to the person: keep it out of extraction
 
     async def _tick_loop(self) -> None:
         while True:
@@ -364,14 +401,20 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     app.state.svc = svc
     add_builder_routes(app, svc.builder)
     add_qm_routes(app, svc.qm)
+    add_procedure_routes(app, svc.procfeed)
+    add_gbrain_routes(app, lambda: svc.gbrain)  # read-only GBrain for QM workers (WorldHooks bearer)
+    add_director_routes(app, svc)  # /director stage console (director.py)
+    add_watch_routes(app, svc.watchboard)  # GET /watches (watches.py)
 
     @app.post("/procedures")
     async def post_procedure(body: dict[str, Any]):
-        """Any harness (QM swarm, cloud routine) reports an admitted Memorable draft: {kind?, draft, origin}."""
+        """Any harness (QM swarm, Builder) reports an admitted Memorable draft: {kind?, draft, origin}."""
         draft = body.get("draft") or {}
         if not draft.get("title"):
             raise HTTPException(422, "draft.title required")
-        slug = await svc.on_procedure(body.get("kind") or "learned", draft, body.get("origin") or {})
+        kind = body.get("kind") or "learned"
+        slug = await svc.on_procedure(kind, draft, body.get("origin") or {}) if kind in ("learned", "recalled") else None
+        await svc.procfeed.reported(kind, draft, body.get("origin") or {}, slug)
         return {"ok": True, "slug": slug}
 
     @app.websocket("/ws/quest")
@@ -380,8 +423,11 @@ def create_app(service: WorldService | None = None) -> FastAPI:
         svc.source = ws.query_params.get("source", "quest3s")
         debug = ws.query_params.get("debug") in ("1", "true")
         await svc.panels.connect(ws, svc.hub.clients, replay=svc.hub.replay)
+        await ws.send_text(json.dumps(svc.procfeed.library_msg()))  # late joiners see the procedure library
         if debug:
             svc.debug_clients.add(ws)
+        if debug or ws.query_params.get("vision") in ("1", "true"):
+            svc.visionfx.clients.add(ws)
         log.info("quest connected (source=%s debug=%s)", svc.source, debug)
         try:
             while True:
@@ -396,12 +442,14 @@ def create_app(service: WorldService | None = None) -> FastAPI:
         finally:
             svc.hub.clients.discard(ws)
             svc.debug_clients.discard(ws)
+            svc.visionfx.clients.discard(ws)
             log.info("quest disconnected")
 
     @app.websocket("/ws/hud")
     async def ws_hud(ws: WebSocket):
         await ws.accept()
         await svc.panels.connect(ws, svc.hub.clients, replay=svc.hub.replay)
+        await ws.send_text(json.dumps(svc.procfeed.library_msg()))
         try:
             while True:
                 await ws.receive_text()  # HUD clients may send pings; ignored
@@ -423,9 +471,13 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     async def post_hud(body: dict[str, Any]):
         if body.get("kind") == "panel":
             return await post_panel({k: v for k, v in body.items() if k != "kind"})
-        kinds = ("person_card", "memory_event", "agent_activity", "context_delta", "dev_github", "dev_session", "panel")
+        kinds = ("person_card", "memory_event", "agent_activity", "context_delta", "dev_github", "qm_swarm", "relationship_vector")
+        if body.get("kind") == "watch_fired" and body.get("watch_id"):  # QM (or anyone) reports a fired WorldWatch
+            await svc.watchboard.fired(str(body["watch_id"]))
+            return {"ok": True}
         if body.get("kind") not in kinds:
             raise HTTPException(422, "kind must be one of " + " | ".join(kinds))
+        svc.devfeed.on_hud(body)  # QM's swarm lanes + recall feed the merged qm_swarm panel
         await svc.hub.broadcast(body)
         return {"ok": True}
 
@@ -456,6 +508,15 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     @app.get("/people")
     async def people():
         return {pid: {"name": p.name, "samples": len(p.embeddings)} for pid, p in svc.store.people.items()}
+
+    @app.get("/debug/frame")
+    async def debug_frame():
+        """Latest camera frame as the headset sent it (RAM only), to check what the Quest camera actually sees."""
+        from fastapi.responses import Response
+        jpeg = getattr(svc, "debug_jpeg", None)
+        if not jpeg:
+            raise HTTPException(404, "no frame yet")
+        return Response(jpeg, media_type="image/jpeg", headers={"cache-control": "no-store"})
 
     @app.post("/debug/utterance")
     async def debug_utterance(body: dict[str, Any]):

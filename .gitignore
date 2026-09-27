@@ -8,3 +8,4 @@ node_modules/
 *.onnx
 perception/data/
 .logs/
+recordings/

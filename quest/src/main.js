@@ -8,6 +8,8 @@ import { HudState } from "./hud.js";
 import { DesktopHud } from "./desktop.js";
 import { XrHud } from "./xr.js";
 import { DEMO_SCRIPT } from "./mock.js";
+import { mockResolve } from "./visionfx.js";
+import { mountDesktopOverlays, mountDiag } from "./perf.js";
 import {
   listCameras,
   pickCamera,
@@ -23,7 +25,7 @@ const video = document.getElementById("cam");
 const hud = new HudState();
 const isQuest = /OculusBrowser|Quest/i.test(navigator.userAgent);
 const source = config.source || (isQuest ? "quest3s" : "desktop-sim");
-let audioCtx, grabber, mic, xr, desktop, link;
+let audioCtx, grabber, mic, xr, lastXr, desktop, link;
 let cameraLocalOnly = false;
 let mode = "idle",
   busy = false,
@@ -125,6 +127,7 @@ function ensureLink() {
       log(`connection ${state}`);
     },
   });
+  hud.net = link.net;
 }
 function pinch(track) {
   if (mode === "preview") return;
@@ -182,7 +185,7 @@ function phase(next) {
   hud.apply({ kind: "clear" });
   for (const [time, message] of DEMO_SCRIPT) {
     if (message.kind === "track") continue;
-    if (time <= [800, 5200, 6000][next]) hud.apply(message);
+    if (time <= [800, 5200, 6000][next]) hud.apply(mockResolve(message));
   }
   hud.selectedTrack = "3";
   hud.setView(["person", "memories", "agents"][next]);
@@ -195,7 +198,7 @@ function phase(next) {
   if (next === 2) {
     // Continue the entire backend story, including PRs and preview screenshots.
     for (const [time, message] of DEMO_SCRIPT.filter(([time, message]) => time > 6000 && message.kind !== 'track')) {
-      phaseTimers.push(setTimeout(() => { hud.apply(message); notify(); }, time - 6000));
+      phaseTimers.push(setTimeout(() => { hud.apply(mockResolve(message)); notify(); }, time - 6000));
     }
   }
   notify();
@@ -208,6 +211,7 @@ async function preview() {
   studio = false;
   link?.close();
   link = null;
+  hud.net = null;
   error = "";
   setMode("preview");
   phase(0);
@@ -337,6 +341,7 @@ async function enterAR() {
       onPanelDismiss: panelDismiss,
     });
     xr.onEnd = () => {
+      lastXr = xr;
       xr = null;
       if (pendingDetail) { showDetail(pendingDetail); pendingDetail = null; }
       showDesktop();
@@ -363,6 +368,7 @@ async function endSession() {
   desktop?.stop();
   link?.close();
   link = null;
+  hud.net = null;
   hud.apply({ kind: "clear" });
   studio = false;
   error = "";
@@ -554,6 +560,10 @@ const api = {
   },
 };
 mountShell(api);
+mountDesktopOverlays(hud);
+if (config.diag) mountDiag({ link: () => link, xrInfo: () => (xr || lastXr)?.info() });
+addEventListener('error', (event) => log(`error: ${event.message} (${String(event.filename || '').split('/').pop()}:${event.lineno})`));
+addEventListener('unhandledrejection', (event) => log(`unhandled: ${event.reason?.message || event.reason}`));
 setInterval(notify, 350);
 const emulated = config.emulate
   ? import("iwer").then(({ XRDevice, metaQuest3 }) => {

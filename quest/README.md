@@ -52,7 +52,9 @@ src/components/       adapted React Bits source and native specular shader
 src/desktop.js        desktop renderer over the webcam
 src/xr.js             immersive-ar renderer, pinch -> gesture
 src/mock.js           scripted demo HUD sequence (?mock=1)
+src/perf.js           ?perf / ?lite / ?diag, OFFLINE chip, frame stats, redraw rate gates
 scripts/mock-world.mjs  stand-in world service for solo dev
+scripts/perf-bench.mjs  headless perf + leak + fuzz bench (see "Headset survival")
 ```
 
 ## Protocol (per contracts/EVENTS.md)
@@ -67,13 +69,27 @@ reads the perception service's debug `tracks` stream (it connects to
 `bbox` on `person_card` / `agent_activity`. Bboxes can be pixels (of the sent
 frame) or normalized 0..1.
 
-Dev cockpit (`src/devpanels.js`): also receives `dev_github`, `dev_session` and
-`context_delta`. GitHub panel sits left of the person, Claude Code panel right of
-the card (body-locked in XR, not head-locked); `context_delta` lines fade in under
+Dev cockpit (`src/devpanels.js`): also receives `dev_github`, `qm_swarm` and
+`context_delta`. GitHub panel sits left of the person, QM SWARM panel (one lane per
+worker, Builder lane expands into its last Claude Code tool calls, recalled/learned
+footer; replaces `agent_activity` for the same hook) right of the card (body-locked in XR, not head-locked); `context_delta` lines fade in under
 the card. `preview_shot` (screenshot of the Builder's branch, served
 locally) pops in ~0.9 m in front of the wearer, world-locked; pinch scrolls, pinch-hold
 closes, OPEN = open preview. Pinching APPROVE / OPEN PREVIEW / COMMENT sends `dev_action`. Hooks in
 the other files are one-liners (grep `devpanels`); `?mock=1` plays it too.
+
+Perception overlay (`src/visionfx.js`): `vision` (~5 Hz, only on `?debug=1`/`?vision=1`
+sockets) draws corner-bracket reticles, the 5 YuNet landmarks, a scan line while
+detecting/matching, a label chip (`UNKNOWN PERSON 03` -> `MATCHING 0.41` -> `MATTHEW 0.87`
+with a lock-on + letter-decode), top enrolled candidates (left of the face, fade after
+lock) and a 16-bar embedding barcode on each face. Learning (self-intro "I'm Matthew"
+or a `label`): progress ring with one tick per sample + a filmstrip of `face_capture`
+crops (shown, never stored), then a `FACE LEARNED · MATTHEW` toast (swallows the
+service's duplicate `PERSON ENROLLED`). `relationship_vector` = radar above the person
+card (desktop: under the card column when there's no headroom). XR: one unit plane per
+face at `?dist=`, sized from the bbox and `?hfov=`, head-facing, under the cards.
+`?mock=1` scripts it first (unknown -> intro -> learning -> recognized -> radar grows)
+and starts the rest of the demo 6.5s later.
 
 ## Run it (desktop, no headset)
 
@@ -157,6 +173,35 @@ through Quest Browser's WebXR passthrough.
 Entering AR does not start the camera. In live mode, tap **start camera + mic**
 before **enter AR** to feed perception; in studio/mock mode, AR needs no camera.
 Hand/controller beams work independently of camera capture.
+## Headset survival (perf + diagnostics)
+
+- `?diag=1`: DIAG block in the control panel. Browser + secure context, which APIs exist (getUserMedia,
+  MediaStreamTrackProcessor, AudioWorklet, navigator.xr), `isSessionSupported` for ar/vr/inline, GPU +
+  max texture size, camera + mic labels (after permission), ws url/state/RTT/reconnects, `/health` of the
+  world service through the Vite proxy. After an AR session: granted features, frame rate + supported rates,
+  blend mode.
+- `?perf=1`: fps, frame ms p50/p95 (our HUD work per frame), draw calls, live textures. XR: small chip
+  head-locked top-left. Desktop: top-right.
+- `?lite=1`: stage fallback. No scan line, no lock-on glow, no radar animation, no swarm particles or
+  comet/satellite trails, label redraws 8 Hz instead of 18, no MSAA, 0.85 framebuffer scale.
+- `?hz=90`: ask Quest Browser for a target frame rate (only if it lists it in `supportedFrameRates`).
+- OFFLINE chip (XR: just above the status strip, desktop: top-right) after 1.5 s without the world service.
+  The link retries with jittered backoff (0.5 s to 8 s), reconnects at once when the tab comes back, and
+  pings every 5 s (the service answers `pong`, which gives the RTT and catches half-open sockets).
+- Uncaught errors land in the panel log (there are no devtools in the headset). One bad HUD message or one
+  broken layer is logged once (`[world] ...` in the console) and skipped; the frame loop keeps running.
+- One WebGL renderer for the page lifetime; everything a session built is disposed on exit, so entering and
+  leaving AR repeatedly doesn't leak contexts or textures.
+
+Bench (headless Chrome + IWER + `?mock=1`, CDP 4x CPU throttle; SwiftShader/ANGLE GPU numbers are not
+Quest numbers, the JS + upload numbers are):
+
+```bash
+NO_HTTPS=1 npm run dev
+node scripts/perf-bench.mjs                      # 42 s in AR, then 6 AR enter/exit cycles
+node scripts/perf-bench.mjs --q lite=1 --cycles 0
+node scripts/perf-bench.mjs --fuzz --secs 6      # malformed messages must not stop the XR loop
+```
 
 ## Known gaps / verify on device
 

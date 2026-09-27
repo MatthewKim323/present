@@ -34,6 +34,7 @@ def test_endpoints_replay_eviction_update_and_dismiss(tmp_path):
                 replay = socket.receive_json()
                 assert replay["id"] == "a" and replay["op"] == "show"
                 assert 0 < replay["ttl_ms"] <= 60000
+                assert socket.receive_json() == {"kind": "procedure_library", "items": []}
             for pid in ("b", "c", "d"):
                 assert c.post("/tools/world-panel", json=show(pid)).status_code == 200
                 for socket in (hud, quest):
@@ -53,6 +54,7 @@ def test_endpoints_replay_eviction_update_and_dismiss(tmp_path):
 def test_action_validation_dedupe_and_cursor(tmp_path):
     _, app = make_app(tmp_path)
     with TestClient(app) as c, c.websocket_connect("/ws/quest") as quest:
+        assert quest.receive_json() == {"kind": "procedure_library", "items": []}
         c.post("/tools/world-panel", json=show(actions=[{"id": "save", "label": "Save"}]))
         quest.receive_json()
         action = {"kind": "panel_action", "panel_id": "context", "action_id": "save", "request_id": "r1"}

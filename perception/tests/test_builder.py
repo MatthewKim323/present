@@ -99,7 +99,7 @@ async def test_happy_path_states_and_hud(tmp_path):
     assert n[0] == ("running", "queued: Add How it works section under hero")
     assert ("running", "coding: Add How it works section under hero") in n
     assert ("running", "editing LandingPage.tsx") in n
-    assert ("running", "PR #7 opened · building preview") in n
+    assert ("running", "PR #7 opened · checks running") in n
     assert n[-1] == ("done", "PR #7 · preview ready · https://opal-git-x.vercel.app")
     last = sent[-1]
     assert last["hook"] == "feature_request.detected" and last["anchor_track_id"] == 3
@@ -136,7 +136,7 @@ async def test_preview_failure(tmp_path):
     b, sent = make(tmp_path, github=FakeGitHub(preview_state="failure"))
     job = await b.dispatch(None, SPEC)
     await finish(b, job)
-    assert job.state == "done" and notes(sent)[-1] == ("done", "PR #7 opened · preview unavailable")
+    assert job.state == "done" and notes(sent)[-1] == ("done", "PR #7 opened")
 
 
 async def test_timeout(tmp_path):
@@ -177,10 +177,11 @@ def test_spec_and_prompt():
     assert s["feature"] == "make the button blue" and s["acceptance"] == []
     b = Builder(BuilderConfig(), lambda m: None, runner=FakeRunner(), github=FakeGitHub(), procedures=FakeMemory())
     from perception.builder import Job
-    job = Job(id="x", event_id=None, spec=normalize_spec(SPEC), repo="qtzx06/opal", branch="world/x", mode="local")
-    p = build_prompt(job, "app")
+    job = Job(id="x", event_id=None, spec=normalize_spec(SPEC), repo="qtzx06/opal", branch="world/x")
+    p = build_prompt(job, "discord-bot", "python3 -m compileall -q core utils")
     assert '--title "[WORLD] Add How it works section under hero"' in p and "world/x" in p
-    assert p.rstrip().endswith("until it exits 0.") and "cd app && npm run build" in p and "LazyMotion" in p
+    assert p.rstrip().endswith("until it exits 0.") and "cd discord-bot && python3 -m compileall -q core utils" in p
+    assert "@bot.command" in p and "`discord-bot/`" in p
     assert "never `git add -A`" in p
     assert b.runner.name == "local"
 
@@ -221,7 +222,7 @@ async def test_procedure_memory_record_and_recall(tmp_path):
     cfg = BuilderConfig(memorable_url="https://mem.test", memorable_key="mk_test", procedures_dir=tmp_path)
     pm = ProcedureMemory(cfg, client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     from perception.builder import Job
-    job = Job(id="j1", event_id=None, spec=normalize_spec(SPEC), repo="o/r", branch="b", mode="local")
+    job = Job(id="j1", event_id=None, spec=normalize_spec(SPEC), repo="o/r", branch="b")
     res = await pm.record(job, TRACE)
     assert res["stored"] and res["steps"] == 3
     assert seen["auth"] == "Bearer mk_test"
@@ -236,7 +237,7 @@ async def test_procedure_memory_refused_not_stored(tmp_path):
     t = httpx.MockTransport(lambda r: httpx.Response(200, json={"draft": {}, "judge": {"admitted": False, "reason": "no_postcondition"}}))
     pm = ProcedureMemory(BuilderConfig(memorable_url="https://m", memorable_key="k", procedures_dir=tmp_path), client=httpx.AsyncClient(transport=t))
     from perception.builder import Job
-    job = Job(id="j1", event_id=None, spec=normalize_spec(SPEC), repo="o/r", branch="b", mode="local")
+    job = Job(id="j1", event_id=None, spec=normalize_spec(SPEC), repo="o/r", branch="b")
     assert await pm.record(job, TRACE) == {"stored": False, "reason": "no_postcondition"}
     assert pm.load() == []
 

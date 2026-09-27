@@ -11,6 +11,7 @@
 //   main.js     setDevSender(fn) so button presses go out as dev_action
 import * as THREE from 'three';
 import { drawPersonCard } from './panels.js';
+import { LITE } from './perf.js';
 
 const FONT = 'ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif';
 const MONO = 'ui-monospace, Menlo, monospace';
@@ -45,7 +46,13 @@ export function applyDev(hud, msg) {
         w.pr_url && { label: `${w.name} PR`, url: w.pr_url },
         w.session_url && { label: `${w.name} session`, url: w.session_url },
       ].filter(Boolean)).slice(0, 6);
-      return false; // retain the normal agent activity card
+      return !!hud.qmSwarm && msg.hook === hud.qmSwarm.hook;
+    case 'qm_swarm':
+      if (!Array.isArray(msg.workers)) return false;
+      hud.qmSwarm = { ...msg, _rx: performance.now() };
+      for (const [key, activity] of hud.activity || [])
+        if (activity.hook === msg.hook) hud.activity.delete(key);
+      return true;
     case 'dev_session':
       hud.devSession = { ...msg, _rx: performance.now() };
       return true;
@@ -69,7 +76,7 @@ export function applyDev(hud, msg) {
       if (hud.previewClosed !== `${msg.job_id}:${msg.pr}`) hud.previewShot = acceptShot(hud.previewShot, msg);
       return true;
     case 'clear':
-      hud.devGithub = null; hud.devSession = null; hud.devWorkerLinks = []; hud.previewShot = null; hud.previewClosed = null; hud.deltas.clear();
+      hud.devGithub = null; hud.devSession = null; hud.qmSwarm = null; hud.devWorkerLinks = []; hud.previewShot = null; hud.previewClosed = null; hud.deltas.clear();
       return false; // let hud.js clear its own state too
     default:
       return false;
@@ -344,6 +351,84 @@ export function drawWorkerLinks(links) {
   return c;
 }
 
+// ---------------------------------------------------------------- QM SWARM panel
+//
+// One panel for the WorldHook swarm (`qm_swarm`): a lane per worker (Context / Product / Builder / ...), the
+// Builder lane expands into its last few Claude Code tool calls, footer shows recalled / learned procedures.
+
+const SW_W = 320;
+const LANE_H = 22;
+const TAIL_H = 14;
+const TAIL_MAX = 6;
+const STATE_COLOR = { done: ACCENT, failed: BAD, running: WARN };
+
+export function laneElapsed(m, w, t = performance.now()) {
+  if (w.elapsed_s == null) return null;
+  return w.elapsed_s + ((w.state || 'running') === 'running' && m._rx ? (t - m._rx) / 1000 : 0);
+}
+
+export function drawSwarmPanel(m, t = performance.now()) {
+  const workers = m.workers || [];
+  const tails = workers.map((w) => (w.tail || []).slice(-TAIL_MAX));
+  const foot = [m.recalled && ['RECALLED', m.recalled], m.learned && ['LEARNED', m.learned]].filter(Boolean);
+  let h = 34 + 6 + workers.length * LANE_H + tails.reduce((a, tl) => a + (tl.length ? tl.length * TAIL_H + 6 : 0), 0) + 4;
+  if (!workers.length) h += LANE_H;
+  if (foot.length) h += 10 + foot.length * 18;
+  const { c, ctx } = panel(SW_W, h);
+  glass(ctx, 0, 0, SW_W, h);
+  const pulse = 0.45 + 0.55 * Math.abs(Math.sin(t / 380));
+
+  // header: QM SWARM · <hook>, done count on the right
+  const lw = text(ctx, 'QM SWARM', 16, 22, { size: 9.5, weight: 600, color: DIM, track: 1.4 });
+  const done = workers.filter((w) => w.state === 'done').length;
+  const cw = workers.length ? text(ctx, `${done}/${workers.length}`, SW_W - 16, 22, { size: 10.5, font: MONO, color: done === workers.length ? ACCENT : MID, align: 'right' }) : 0;
+  text(ctx, `· ${m.hook || ''}`, 16 + lw + 6, 22, { size: 11, font: MONO, color: MID, max: SW_W - 44 - lw - cw });
+
+  let y = 34 + 6;
+  if (!workers.length) text(ctx, 'waiting for workers…', 16, y + 14, { size: 11, color: DIM });
+  workers.forEach((w, i) => {
+    const st = w.state || 'running';
+    const col = STATE_COLOR[st] || WARN;
+    const ly = y + 15;
+    dot(ctx, 20, ly - 4, 3, col, st === 'running' ? pulse : 1);
+    text(ctx, w.name || 'Worker', 32, ly, { size: 12, weight: 600, max: 72 });
+    const el = laneElapsed(m, w, t);
+    const ew = el != null ? text(ctx, mmss(el), SW_W - 16, ly, { size: 10.5, font: MONO, color: DIM, align: 'right' }) + 8 : 0;
+    const note = w.note || (st === 'running' ? 'working' : st);
+    text(ctx, note, 108, ly, { size: 11.5, color: st === 'failed' ? BAD : MID, max: SW_W - 124 - ew });
+    y += LANE_H;
+    const tl = tails[i];
+    if (tl.length) {
+      // tool tail: a thin rail on the left, newest brightest
+      ctx.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx.fillRect(20, y - 2, 1, tl.length * TAIL_H + 2);
+      tl.forEach((e, k) => {
+        const ty = y + 10 + k * TAIL_H;
+        ctx.globalAlpha = 0.4 + 0.6 * ((k + 1) / tl.length);
+        text(ctx, e.tool, 32, ty, { size: 10, font: MONO, color: TOOL_COLOR[e.tool] || MID, max: 44 });
+        text(ctx, e.target, 80, ty, { size: 10, font: MONO, color: MID, max: SW_W - 96 });
+        ctx.globalAlpha = 1;
+      });
+      y += tl.length * TAIL_H + 6;
+    }
+  });
+
+  if (foot.length) {
+    y += 4;
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath(); ctx.moveTo(16, y); ctx.lineTo(SW_W - 16, y); ctx.stroke();
+    y += 4;
+    for (const [label, p] of foot) {
+      y += 16;
+      const rw = text(ctx, label.toLowerCase() + ':', 16, y, { size: 10.5, weight: 600, color: ACCENT });
+      const steps = p.steps != null ? ` (${p.steps} step${p.steps === 1 ? '' : 's'})` : '';
+      text(ctx, `${p.title || 'procedure'}${steps}`, 22 + rw, y, { size: 11, color: MID, max: SW_W - 38 - rw });
+      y += 2;
+    }
+  }
+  return c;
+}
+
 // ---------------------------------------------------------------- actions
 
 export function safeLink(url) {
@@ -590,7 +675,8 @@ export class DesktopDev {
   draw(ctx, placed, vr) {
     const hud = this.hud;
     this.hits = [];
-    const gh = hud.devGithub, ss = hud.devSession;
+    this.ssRect = null;
+    const gh = hud.devGithub, ss = hud.qmSwarm || hud.devSession;
     const t = performance.now();
     this._cockpit(ctx, placed, vr, gh, ss, t);
     this._preview(ctx, t);
@@ -623,7 +709,7 @@ export class DesktopDev {
     const hud = this.hud;
     if (!gh && !ss && !hud.devWorkerLinks?.length) return;
     if (gh && this.cache.gh !== gh) { this.cache.gh = gh; this.cache.ghCanvas = drawGithubPanel(gh); }
-    if (ss && (this.cache.s !== ss || t - this.cache.sT > 120)) { this.cache.s = ss; this.cache.sT = t; this.cache.sCanvas = drawSessionPanel(ss, t); }
+    if (ss && (this.cache.s !== ss || t - this.cache.sT > 120)) { this.cache.s = ss; this.cache.sT = t; this.cache.sCanvas = ss === hud.qmSwarm ? drawSwarmPanel(ss, t) : drawSessionPanel(ss, t); }
     const card = [...placed.values()][0];
     const b = card && [...placed.keys()].map((id) => hud.bboxFor(id)).find(Boolean);
     const put = (c, x, y) => { const w = c.width / S, h = c.height / S; x = Math.max(8, Math.min(innerWidth - w - 8, x)); y = Math.max(8, Math.min(innerHeight - h - 8, y)); ctx.drawImage(c, x, y, w, h); return { x, y, w, h }; };
@@ -643,6 +729,7 @@ export class DesktopDev {
         y = ghRect ? ghRect.y + ghRect.h + 10 : y;
       }
       const rect = put(c, x, y);
+      if (ss === hud.qmSwarm) this.ssRect = rect;
       for (const h of c.hits || []) this.hits.push({ ...h, x: rect.x + h.x, y: rect.y + h.y });
     }
     if (hud.devWorkerLinks?.length) {
@@ -772,10 +859,12 @@ export class XrDev {
       // left of the person: card sits right of their head, so skip past the card and a body width
       place('gh', card ? -(cardHalf + 0.55 + m.w / 2) : -(0.04 + m.w / 2));
     } else this._drop('gh');
-    if (hud.devSession) {
-      const s = hud.devSession;
+    if (hud.qmSwarm || hud.devSession) {
+      const s = hud.qmSwarm || hud.devSession;
       const sec = Math.floor(t / 250);
-      const m = this._mesh('ss', `${s._rx}:${sec}`, () => drawSessionPanel(s, t));
+      const active = s === hud.qmSwarm && (s.workers || []).some(w => w.state === 'running');
+      const key = active ? `${s._rx}:${Math.floor(t / (LITE ? 500 : 250))}` : `${s._rx}:${sec}`;
+      const m = this._mesh('ss', key, () => s === hud.qmSwarm ? drawSwarmPanel(s, t) : drawSessionPanel(s, t));
       place('ss', card ? cardHalf + 0.06 + m.w / 2 : 0.04 + m.w / 2);
     } else this._drop('ss');
     if (hud.devWorkerLinks?.length) {

@@ -121,8 +121,9 @@ export function drawPersonLabel(m, { selected = false, focused = false } = {}) {
   text(ctx, m.name || "Someone nearby", 33, 28, {
     size: 17,
     weight: 500,
-    max: 184,
+    max: m.agent ? 142 : 184,
   });
+  if (m.agent) text(ctx, "AGENT", 190, 26, { size: 9, weight: 600, max: 42, track: 1 });
   text(ctx, m.subtitle || "Select to see context", 33, 47, {
     size: 11,
     color: MUTED,
@@ -142,6 +143,7 @@ export function drawPersonCard(m) {
     m.last && ["LAST CONVERSATION", m.last],
     m.owes_you && ["FROM THEM", m.owes_you],
     m.you_owe && ["YOUR NEXT STEP", m.you_owe],
+    m.watching && ["WATCHING", m.watching],
   ]
     .filter(Boolean)
     .map(([label, value]) => ({
@@ -163,8 +165,9 @@ export function drawPersonCard(m) {
   text(ctx, m.name || "Someone nearby", 18, 53, {
     size: 23,
     weight: 500,
-    max: 264,
+    max: m.agent ? 192 : 264,
   });
+  if (m.agent) text(ctx, "AGENT", 233, 51, { size: 10, weight: 600, max: 50, track: 1 });
   text(ctx, m.subtitle || "Your shared context", 18, 74, {
     size: 12,
     color: MUTED,

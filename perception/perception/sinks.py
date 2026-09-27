@@ -13,6 +13,8 @@ from typing import Any, Awaitable, Callable, Protocol
 
 import httpx
 
+from .visionfx import rel_vectors
+
 log = logging.getLogger("world.sinks")
 
 
@@ -95,8 +97,10 @@ class QMSink:
         client: httpx.AsyncClient | None = None,
         timeout: float = 5.0,
         secret: str | None = None,
+        on_response: Callable[[dict[str, Any], int, Any], Awaitable[None]] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        self.on_response = on_response  # QM's reply (created watch, fired watch ids) -> watches.WatchBoard
         self.client = client or httpx.AsyncClient(timeout=timeout)
         self.secret = secret if secret is not None else os.environ.get("WORLD_HOOKS_SECRET", "")
 
@@ -104,9 +108,17 @@ class QMSink:
         if not self.base_url:
             return
         headers = {"authorization": f"Bearer {self.secret}"} if self.secret else {}
-        r = await self.client.post(f"{self.base_url}/world-events", json=event, headers=headers)
+        # world.watch_requested makes QM run one model call before it answers
+        kw = {"timeout": 45.0} if event["type"] == "world.watch_requested" else {}
+        r = await self.client.post(f"{self.base_url}/world-events", json=event, headers=headers, **kw)
         if r.status_code >= 400:
             log.warning("QM rejected %s: %s %s", event["type"], r.status_code, r.text[:200])
+        if self.on_response is not None:
+            try:
+                body = r.json()
+            except ValueError:
+                body = None
+            await self.on_response(event, r.status_code, body)
 
 
 MEMORY_TEXT = {
@@ -155,11 +167,13 @@ class HudSink:
     def __init__(self, broadcast: Callable[[dict[str, Any]], Awaitable[None]], gbrain: GBrainSink | None = None) -> None:
         self.broadcast = broadcast
         self.gbrain = gbrain
+        self.agent_for: Callable[[str | None], dict[str, Any] | None] | None = None  # pinch-assigned agent badge
 
     async def emit(self, event: dict[str, Any]) -> None:
         t = event["type"]
         if t == "person.encountered":
             await self.broadcast(await self.person_card(event))
+            await rel_vectors.on_event(event, self.gbrain, self.broadcast)  # radar beside the card (visionfx.py)
             return
         if t == "relationship.updated":
             # live compounding: each learned delta pops onto the person card
@@ -167,6 +181,7 @@ class HudSink:
             for d in event.get("payload", {}).get("deltas") or []:
                 if d.get("text"):
                     await self.broadcast({"kind": "context_delta", "person_id": pid, "delta_kind": d.get("kind"), "text": f"+ {d['text']}"})
+            await rel_vectors.on_event(event, self.gbrain, self.broadcast)
             return
         text = MEMORY_TEXT.get(t)
         if text:
@@ -195,6 +210,9 @@ class HudSink:
         for k in ("seen_before", "here", "relationship", "recent_deltas"):
             if ctx.get(k):
                 card[k] = ctx[k]
+        agent = self.agent_for(pid) if self.agent_for and pid else None
+        if agent:
+            card["agent"] = agent
         return card
 
 
