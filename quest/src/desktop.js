@@ -3,6 +3,7 @@ import { drawMemoryToast, drawAgentActivity, anyRunning } from './panels.js';
 import { drawPersonCardPlus as drawPersonCard, deltasAnimating, DesktopDev } from './devpanels.js';
 import { DesktopVision } from './visionfx.js';
 import { DesktopSwarm } from './swarmviz.js';
+import { DesktopBrain } from './brainpanel.js';
 import { DesktopMemory } from './memorypanel.js';
 
 export class DesktopHud {
@@ -18,6 +19,7 @@ export class DesktopHud {
     this.dev = new DesktopDev(hud);
     this.vfx = new DesktopVision(hud); // perception overlay (visionfx.js)
     this.swarm = new DesktopSwarm(hud);
+    this.brain = new DesktopBrain(hud); // GBRAIN live feed
     this.mem = new DesktopMemory(hud, this.dev); // Memorable stack under the QM SWARM panel
     window.addEventListener('resize', () => this._resize());
     // Click a card (or a person box) = pinch on that track.
@@ -114,6 +116,7 @@ export class DesktopHud {
 
     this.swarm.draw(ctx, vr);
     this.dev.draw(ctx, placed, vr);
+    this.brain.draw(ctx, placed, vr);
     this.mem.draw(ctx);
     this.vfx.draw(ctx, placed, vr, this.hits);
 

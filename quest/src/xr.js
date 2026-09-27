@@ -8,6 +8,7 @@ import { drawMemoryToast, drawAgentActivity, drawStatus, anyRunning } from './pa
 import { drawPersonCardPlus as drawPersonCard, deltasAnimating, XrDev } from './devpanels.js';
 import { XrVision } from './visionfx.js';
 import { XrSwarm } from './swarmviz.js';
+import { XrBrain } from './brainpanel.js';
 import { XrMemory } from './memorypanel.js';
 
 const M_PER_PX = 0.0012; // panel css px -> meters (300px card ~ 0.36 m)
@@ -48,6 +49,7 @@ export class XrHud {
     this.dev = new XrDev(this.scene, session, this.hud); // GitHub + Claude Code panels
     this.vfx = new XrVision(this.scene, this.hud); // perception overlay on the face (visionfx.js)
     this.swarm = new XrSwarm(this.scene, this); // spatial QM swarm graph
+    this.brain = new XrBrain(this.scene, this.hud); // GBRAIN live feed
     this.mem = new XrMemory(this.scene, this.hud); // Memorable stack under the QM SWARM panel
 
     // Hand pinch (and controller trigger) arrive as `select`.
@@ -146,6 +148,7 @@ export class XrHud {
     this.mem.frame(head, headQ, this.dev);
     this.vfx.frame(this, head, headQ);
     this.swarm.frame(head, headQ);
+    this.brain.frame(head, headQ, this.meshes, this.dev);
     this.renderer.render(this.scene, this.camera);
   }
 
