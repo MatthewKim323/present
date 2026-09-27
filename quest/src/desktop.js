@@ -1,7 +1,7 @@
 // Desktop mode: HUD composited over the webcam feed. Same panels as XR.
 import { drawMemoryToast, drawAgentActivity, anyRunning } from './panels.js';
 import { drawPersonCardPlus as drawPersonCard, deltasAnimating, DesktopDev } from './devpanels.js';
-import { DesktopVision } from './visionfx.js';
+import { DesktopVision, hideCard } from './visionfx.js';
 import { DesktopSwarm } from './swarmviz.js';
 import { DesktopBrain } from './brainpanel.js';
 import { DesktopMemory } from './memorypanel.js';
@@ -101,6 +101,7 @@ export class DesktopHud {
 
     let freeY = z.right.y, first = true;
     for (const [id, msg] of hud.cards) {
+      if (hideCard(hud, id, msg)) continue; // unknown background faces: no floating card (visionfx.js)
       const c = this._raster('card:' + id, msg, drawPersonCard, deltasAnimating(msg));
       const w = (c.width / 2) * k, h = (c.height / 2) * k;
       let x, y;

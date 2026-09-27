@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { drawMemoryToast, drawAgentActivity, drawStatus, anyRunning } from './panels.js';
 import { drawPersonCardPlus as drawPersonCard, deltasAnimating, XrDev } from './devpanels.js';
-import { XrVision } from './visionfx.js';
+import { XrVision, hideCard } from './visionfx.js';
 import { XrSwarm } from './swarmviz.js';
 import { XrBrain } from './brainpanel.js';
 import { XrMemory } from './memorypanel.js';
@@ -162,6 +162,7 @@ export class XrHud {
 
     // 1. person cards
     for (const [id, msg] of hud.cards) {
+      if (hideCard(hud, id, msg)) continue; // unknown background faces: no floating card (visionfx.js)
       const k = 'card:' + id;
       seen.add(k);
       const m = this._mesh(k, msg, drawPersonCard, deltasAnimating(msg));

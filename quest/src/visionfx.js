@@ -102,7 +102,23 @@ function liveFaces(hud, t = now()) {
     if (t - f.t > STALE_MS) { hud.vfx.faces.delete(k); continue; }
     out.push([k, f]);
   }
+  // Unrecognized faces other than the conversation partner (the single largest face in view) get only faint
+  // corner brackets: no chip, readouts, candidates or barcode. Recognized / learning faces always get the full treatment.
+  let big = null, bigA = -1;
+  for (const [, f] of out) { const a = f.e.bbox[2] * f.e.bbox[3]; if (a > bigA) { bigA = a; big = f; } }
+  for (const [k, f] of out) {
+    const st = f.e.state, la = hud.vfx.learnedAt?.get(k) || 0;
+    f.minor = !(st === 'recognized' || st === 'learning' || (la && t - la < FILM_HOLD_MS * 2) || f === big);
+  }
   return out;
+}
+
+// Person cards for UNKNOWN faces float around the HUD with nothing to say. Show one only when its face is the
+// conversation partner (the largest face) or is being learned; recognized people always get their card.
+export function hideCard(hud, id, msg) {
+  if (!msg || !/^\s*unknown/i.test(String(msg.name || ''))) return false;
+  const f = hud.vfx?.faces?.get(String(id));
+  return !f || !!f.minor || now() - f.t > STALE_MS;
 }
 
 function shownDims(r, t = now()) {
@@ -175,6 +191,20 @@ export function drawFace(ctx, r, f, film, t = now(), learnedAt = 0) {
   const k = (e.state === 'recognized' ? 1 + 0.35 * (1 - lock) : 1) * breathe;
   const w = r.w * k, h = r.h * k, x0 = cx - w / 2, y0 = cy - h / 2;
   const L = Math.max(8, Math.min(w, h) * 0.2);
+  if (f.minor) {
+    // background face: acknowledged, nothing more (see liveFaces)
+    const m = Math.max(6, Math.min(r.w, r.h) * 0.14);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(232,236,240,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const [px, py, dx, dy] of [[r.x, r.y, 1, 1], [r.x + r.w, r.y, -1, 1], [r.x, r.y + r.h, 1, -1], [r.x + r.w, r.y + r.h, -1, -1]]) {
+      ctx.moveTo(px + dx * m, py); ctx.lineTo(px, py); ctx.lineTo(px, py + dy * m);
+    }
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   ctx.save();
   ctx.strokeStyle = col;
   ctx.lineWidth = e.state === 'recognized' ? 2 : 1.5;
