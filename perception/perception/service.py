@@ -4,6 +4,7 @@
   ws  /ws/hud     any HUD client; receives HUD messages
   POST /events    inject a WorldEvent (demo scripts, tests)
   POST /hud       push a raw HUD message (e.g. QM agent_activity) to every HUD client
+  POST /gbrain/query, GET /gbrain/page/{slug}, GET /gbrain/person/{id}   read-only GBrain for QM workers (bearer)
   GET  /health    status + latency numbers
   debug: POST /debug/utterance, POST /debug/end-conversation, GET /people
 """
@@ -33,6 +34,7 @@ from .sinks import FanOut, HudSink, QMSink, StubGBrainSink
 from .builder import Builder, BuilderConfig, BuilderSink, add_builder_routes
 from .devfeed import DevFeed
 from .procfeed import ProcFeed, add_procedure_routes
+from .gbrain_ops import GBrainOpFeed, add_gbrain_routes
 from .vision import VisionPipeline
 from .intro import IntroEnroller
 from .visionfx import VisionFx
@@ -75,6 +77,9 @@ class WorldService:
         self.hub = Hub()
         self.debug_clients: set[WebSocket] = set()
         self.gbrain = self._make_gbrain(StubGBrainSink(self.s.events_log_path, people_meta=self._people_meta))
+        self.gbrain_ops = GBrainOpFeed(self.hub.broadcast)  # gbrain_op HUD lines, coalesced, <= ~5/s
+        if hasattr(self.gbrain, "ops"):
+            self.gbrain.ops = self.gbrain_ops
         self.qm = QMSink(self.s.qm_url)
         self.hud = HudSink(self.hub.broadcast, gbrain=self.gbrain)
         bcfg = BuilderConfig.from_env()
@@ -338,6 +343,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     app.state.svc = svc
     add_builder_routes(app, svc.builder)
     add_procedure_routes(app, svc.procfeed)
+    add_gbrain_routes(app, lambda: svc.gbrain)  # read-only GBrain for QM workers (WorldHooks bearer)
 
     @app.post("/procedures")
     async def post_procedure(body: dict[str, Any]):

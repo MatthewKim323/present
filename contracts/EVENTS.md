@@ -185,6 +185,41 @@ a fresh panel. Keep it well under the ws frame limit (JPEG q~0.8, <= ~600 KB).
 
 Debug: `/ws/quest?debug=1` also streams `{ "kind": "tracks", "tracks": [{ "track_id", "bbox", "person_id", "label" }] }` for anchoring.
 
+### GBrain live feed (`perception/gbrain_ops.py`, Quest `src/brainpanel.js`)
+
+Every GBrain call the world service makes (perception writes, the live relationship pass, person-card reads, QM
+worker reads through the proxy below, Memorable procedure pages) becomes one `gbrain_op`:
+
+```json
+{ "kind": "gbrain_op", "op": "query" | "search" | "get_page" | "put_page" | "add_timeline_entry" | "add_link",
+  "actor": "perception" | "live" | "card" | "memorable" | "qm:Context" | "qm:Product" | "qm:Builder" | "qm:<worker>",
+  "slug": "relationships/stephen-matthew",      // optional; add_link: the from page, plus "to"
+  "query": "matthew opal feedback",             // query/search only, <= 80 chars
+  "hits": [{ "slug": "feedback/2026-09-27-opal-landing-feedback", "title": "Opal landing feedback" }],  // query/search, max 5
+  "title": "Matthew",                           // get_page, when known
+  "ms": 142, "ok": true, "miss": true,          // miss: get_page on a page that does not exist yet
+  "person_id": "matthew",                       // when the slug is people/<id> or relationships/<wearer>-<id>
+  "event_id": "evt_01J...",                     // the WorldEvent the op serves, when known
+  "count": 3 }                                  // coalesced identical ops
+```
+
+Slugs, titles and short queries only (each <= 80 chars), never page bodies or snippets. Identical ops still queued
+fold into one line (`count`); the feed sends at most ~5/s (burst 5) and, if the backlog passes 24, sheds
+non-QM lines first. Reads are `query` / `search` / `get_page`; the rest are writes.
+
+Read-only GBrain for QM swarm workers (the world service holds the gbrain.io token; workers reach it at
+`http://host.docker.internal:8787` with `Authorization: Bearer $WORLD_HOOKS_SECRET`, 401 otherwise, 503 if the
+secret is unset):
+
+| route | returns |
+|---|---|
+| `POST /gbrain/query {q, actor, event_id?, limit?}` | `{q, results: [{slug, title, snippet}]}` hybrid query, snippet <= 200 chars (503 on the stub backend) |
+| `GET /gbrain/page/{slug}?actor=&event_id=` | `{slug, title, frontmatter, compiled_truth, timeline}` (compiled truth capped at 4000 chars, timeline 1500; 404 if missing) |
+| `GET /gbrain/person/{id}?actor=&event_id=` | the person-card context (`subtitle`, `last`, `you_owe`, `owes_you`, `seen_before`, `relationship`, `recent_deltas`) plus `facts`, `recent`, `you_owe_all`, `owes_you_all`, `encounters`, `relationship_page` |
+
+`actor` is the worker name (`Context` becomes `qm:Context`). Every call emits a `gbrain_op` with that actor; a
+person read always shows as `get_page people/<id>` so the HUD can link the feed to the person card.
+
 ### Perception overlay (`perception/visionfx.py`, Quest `src/visionfx.js`)
 
 `vision` and `face_capture` go only to clients that asked (`/ws/quest?debug=1` or `?vision=1`), never to `/ws/hud`.
