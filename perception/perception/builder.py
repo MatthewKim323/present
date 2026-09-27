@@ -374,13 +374,31 @@ class LocalClaudeRunner:
             env.pop("ANTHROPIC_API_KEY", None)  # use the logged-in Claude subscription, not the extraction key
         return env
 
+    async def _clone(self, repo: str, d: Path) -> tuple[int, str]:
+        """Clone from a warm local cache of the repo (fetch only what's new) instead of the network every time."""
+        cache = self.cfg.workdir / ".cache" / repo.replace("/", "__")
+        if (cache / ".git").exists():
+            code, out = await _sh("git", "fetch", "-q", "origin", cwd=cache, timeout=120)
+            if code == 0:
+                await _sh("git", "reset", "-q", "--hard", "origin/HEAD", cwd=cache)
+        else:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            code, out = await _sh("gh", "repo", "clone", repo, str(cache), "--", "--quiet", timeout=600)
+            if code:
+                return code, out
+        code, out = await _sh("git", "clone", "-q", str(cache), str(d), timeout=120)
+        if code:
+            return code, out
+        url = (await _sh("git", "remote", "get-url", "origin", cwd=cache))[1].strip()
+        return await _sh("git", "remote", "set-url", "origin", url, cwd=d)
+
     async def run(self, job: Job, prompt: str, progress: Progress) -> RunResult:
         d = self.cfg.workdir / job.id
         if d.exists():
             shutil.rmtree(d)
         d.parent.mkdir(parents=True, exist_ok=True)
         await progress("cloning repo")
-        code, out = await _sh("gh", "repo", "clone", job.repo, str(d), "--", "--quiet")
+        code, out = await self._clone(job.repo, d)
         if code:
             return RunResult(False, error=f"clone failed: {out[-200:]}")
         code, out = await _sh("git", "ls-remote", "--heads", "origin", job.branch, cwd=d)
@@ -726,7 +744,7 @@ class Builder:
         await self._set(job, "done", f"PR #{job.pr_number} · starting local preview")
         url = await self.preview.start(job)
         if not url:
-            await self._set(job, "done", f"PR #{job.pr_number} opened · preview unavailable")
+            await self._set(job, "done", f"PR #{job.pr_number} opened")
             return
         job.preview_url = url
         job.mark("local_preview_ready")
@@ -781,7 +799,7 @@ class Builder:
                     if pr:
                         job.pr_number, job.pr_url, job.head_sha = pr["number"], pr["url"], pr.get("headRefOid")
                         job.mark("pr_opened")
-                        await self._set(job, "pr_open", f"PR #{job.pr_number} opened · building preview")
+                        await self._set(job, "pr_open", f"PR #{job.pr_number} opened · checks running")
                 if job.pr_number is not None and self.preview is not None:
                     if run_task.done():  # local preview is served from the checkout once the coder is finished
                         break
@@ -800,7 +818,7 @@ class Builder:
                         if state == "failure":  # the PR is still real; a blocked/failed preview is not a failed job
                             job.error = "preview deployment failed"
                             job.mark("preview_failed")
-                            await self._set(job, "done", f"PR #{job.pr_number} opened · preview unavailable")
+                            await self._set(job, "done", f"PR #{job.pr_number} opened")
                             break
             except Exception as e:  # noqa: BLE001
                 log.warning("builder %s poll error: %s", job.id, e)

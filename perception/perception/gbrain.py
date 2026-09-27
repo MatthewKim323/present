@@ -963,7 +963,10 @@ class GBrainIOSink:
         people = [p for p in (origin.get("people") or []) if p and p != self.wearer_id]
         what = origin.get("feature") or "a similar request"
 
+        stub = procedure_page(doc, {**origin, "people": people}, self.situation, [f"[[{self.situation.slug}]]"])
+
         async def job() -> None:
+            await self._ensure_page(slug, stub)  # recalled from a store GBrain never saw (e.g. QM's): create it first
             await self._timeline(slug, f"Recalled for: {what}", f"at {self.situation.label}, event {origin.get('event_id') or '-'}")
             for pid in people:
                 await self._timeline(self.rel_slug(pid), f"Agents reused a learned procedure: {doc['title']}", f"see [[{slug}]], for {what}")
