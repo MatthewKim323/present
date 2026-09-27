@@ -65,9 +65,10 @@ reads the perception service's debug `tracks` stream (it connects to
 `bbox` on `person_card` / `agent_activity`. Bboxes can be pixels (of the sent
 frame) or normalized 0..1.
 
-Dev cockpit (`src/devpanels.js`): also receives `dev_github`, `dev_session` and
-`context_delta`. GitHub panel sits left of the person, Claude Code panel right of
-the card (body-locked in XR, not head-locked); `context_delta` lines fade in under
+Dev cockpit (`src/devpanels.js`): also receives `dev_github`, `qm_swarm` and
+`context_delta`. GitHub panel sits left of the person, QM SWARM panel (one lane per
+worker, Builder lane expands into its last Claude Code tool calls, recalled/learned
+footer; replaces `agent_activity` for the same hook) right of the card (body-locked in XR, not head-locked); `context_delta` lines fade in under
 the card. `preview_shot` (screenshot of the Builder's branch, served
 locally) pops in ~0.9 m in front of the wearer, world-locked; pinch scrolls, pinch-hold
 closes, OPEN = open preview. Pinching APPROVE / OPEN PREVIEW / COMMENT sends `dev_action`. Hooks in

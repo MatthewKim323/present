@@ -1,7 +1,9 @@
-// Dev cockpit: GitHub + Claude Code panels beside the person card, plus live
+// Dev cockpit: GitHub + QM SWARM panels beside the person card, plus live
 // `context_delta` lines under the card. Same look as panels.js (dark glass, small
 // type, one accent). All data comes from the world service (contracts/EVENTS.md:
-// dev_github, dev_session, context_delta, preview_shot); this file never talks to GitHub.
+// dev_github, qm_swarm, context_delta, preview_shot); this file never talks to GitHub.
+// qm_swarm = the WorldHook swarm (QM lanes + the Builder's Claude Code tool tail); while it is up,
+// agent_activity for the same hook is swallowed here so the swarm never renders twice.
 // preview_shot = screenshot of the Builder's branch served locally, popped in front of the wearer.
 //
 // Hooks (kept to a few lines in the teammate-owned files):
@@ -37,9 +39,12 @@ export function applyDev(hud, msg) {
     case 'dev_github':
       hud.devGithub = msg;
       return true;
-    case 'dev_session':
-      hud.devSession = { ...msg, _rx: performance.now() };
+    case 'qm_swarm':
+      hud.qmSwarm = { ...msg, _rx: performance.now() };
+      for (const [k, a] of hud.activity || []) if (a.hook === msg.hook) hud.activity.delete(k);
       return true;
+    case 'agent_activity':
+      return !!hud.qmSwarm && msg.hook === hud.qmSwarm.hook; // the QM SWARM panel already shows it
     case 'context_delta': {
       const pid = msg.person_id || '_';
       const list = [...(hud.deltas.get(pid) || []), { text: msg.text, kind: msg.delta_kind, t: performance.now() }];
@@ -60,7 +65,7 @@ export function applyDev(hud, msg) {
       if (hud.previewClosed !== `${msg.job_id}:${msg.pr}`) hud.previewShot = acceptShot(hud.previewShot, msg);
       return true;
     case 'clear':
-      hud.devGithub = null; hud.devSession = null; hud.previewShot = null; hud.previewClosed = null; hud.deltas.clear();
+      hud.devGithub = null; hud.qmSwarm = null; hud.previewShot = null; hud.previewClosed = null; hud.deltas.clear();
       return false; // let hud.js clear its own state too
     default:
       return false;
@@ -204,7 +209,8 @@ export function drawGithubPanel(m) {
   y += 18;
   text(ctx, 'PREVIEW', 30, y, { size: 9.5, weight: 600, color: DIM, track: 1 });
   if (top.preview_url) text(ctx, host(top.preview_url), 84, y, { size: 10.5, font: MONO, color: ACCENT, max: GH_W - 100 });
-  else text(ctx, 'building…', 84, y, { size: 10.5, color: WARN });
+  else if (top.checks === 'pending') text(ctx, 'building…', 84, y, { size: 10.5, color: WARN });
+  else text(ctx, 'none', 84, y, { size: 10.5, color: DIM }); // e.g. the Discord bot: no deploy preview
 
   if (hunk.length) {
     y += 12;
@@ -262,57 +268,82 @@ export function drawGithubPanel(m) {
   return c;
 }
 
-// ---------------------------------------------------------------- Claude Code panel
+// ---------------------------------------------------------------- QM SWARM panel
+//
+// One panel for the WorldHook swarm (`qm_swarm`): a lane per worker (Context / Product / Builder / ...), the
+// Builder lane expands into its last few Claude Code tool calls, footer shows recalled / learned procedures.
 
-const CC_W = 320;
+const SW_W = 320;
+const LANE_H = 22;
+const TAIL_H = 14;
+const TAIL_MAX = 6;
 const TOOL_COLOR = { Edit: ACCENT, Write: ACCENT, Bash: WARN, Read: MID, Grep: MID, Glob: MID };
+const STATE_COLOR = { done: ACCENT, failed: BAD, running: WARN };
 
-export function sessionElapsed(m, t = performance.now()) {
-  const live = ['queued', 'running', 'pr_open'].includes(m.state);
-  return (m.elapsed_s || 0) + (live && m._rx ? (t - m._rx) / 1000 : 0);
+export function laneElapsed(m, w, t = performance.now()) {
+  if (w.elapsed_s == null) return null;
+  return w.elapsed_s + ((w.state || 'running') === 'running' && m._rx ? (t - m._rx) / 1000 : 0);
 }
 
-export function drawSessionPanel(m, t = performance.now()) {
-  const tail = (m.tail || []).slice(-8);
-  const proc = m.procedure;
-  let h = 34 + 20 + 18 + (proc ? 18 : 0) + (tail.length ? 12 + tail.length * 14 : 0) + 24;
-  const { c, ctx } = panel(CC_W, h);
-  glass(ctx, 0, 0, CC_W, h);
-  const st = m.state || 'running';
-  const live = ['queued', 'running', 'pr_open'].includes(st);
-  const col = st === 'done' ? ACCENT : st === 'failed' ? BAD : WARN;
-  text(ctx, 'CLAUDE CODE', 16, 22, { size: 9.5, weight: 600, color: DIM, track: 1.4 });
-  text(ctx, m.job_id || '', 104, 22, { size: 10.5, font: MONO, color: DIM, max: 90 });
-  const ew = text(ctx, mmss(sessionElapsed(m, t)), CC_W - 16, 22, { size: 11, font: MONO, color: MID, align: 'right' });
-  const sw = text(ctx, st.replace('_', ' ').toUpperCase(), CC_W - 24 - ew, 22, { size: 8.5, weight: 600, color: col, track: 1.2, align: 'right' });
-  dot(ctx, CC_W - 32 - ew - sw, 18.5, 3, col, live ? 0.45 + 0.55 * Math.abs(Math.sin(t / 380)) : 1);
-  let y = 48;
-  text(ctx, m.feature || '', 16, y, { size: 13, weight: 600, max: CC_W - 32 });
-  y += 18;
-  text(ctx, live ? '›' : '·', 16, y, { size: 12, weight: 600, color: col });
-  text(ctx, m.step || st, 28, y, { size: 11, font: MONO, color: '#e8ecf0', max: CC_W - 44 });
-  if (proc) {
-    y += 18;
-    const rw = text(ctx, 'RECALLED', 16, y, { size: 9, weight: 600, color: ACCENT, track: 1.2 });
-    text(ctx, `${proc.title} · ${proc.steps} steps`, 24 + rw, y, { size: 11, color: MID, max: CC_W - 40 - rw });
-  }
-  if (tail.length) {
-    y += 8;
+export function drawSwarmPanel(m, t = performance.now()) {
+  const workers = m.workers || [];
+  const tails = workers.map((w) => (w.tail || []).slice(-TAIL_MAX));
+  const foot = [m.recalled && ['RECALLED', m.recalled], m.learned && ['LEARNED', m.learned]].filter(Boolean);
+  let h = 34 + 6 + workers.length * LANE_H + tails.reduce((a, tl) => a + (tl.length ? tl.length * TAIL_H + 6 : 0), 0) + 4;
+  if (!workers.length) h += LANE_H;
+  if (foot.length) h += 10 + foot.length * 18;
+  const { c, ctx } = panel(SW_W, h);
+  glass(ctx, 0, 0, SW_W, h);
+  const pulse = 0.45 + 0.55 * Math.abs(Math.sin(t / 380));
+
+  // header: QM SWARM · <hook>, done count on the right
+  const lw = text(ctx, 'QM SWARM', 16, 22, { size: 9.5, weight: 600, color: DIM, track: 1.4 });
+  const done = workers.filter((w) => w.state === 'done').length;
+  const cw = workers.length ? text(ctx, `${done}/${workers.length}`, SW_W - 16, 22, { size: 10.5, font: MONO, color: done === workers.length ? ACCENT : MID, align: 'right' }) : 0;
+  text(ctx, `· ${m.hook || ''}`, 16 + lw + 6, 22, { size: 11, font: MONO, color: MID, max: SW_W - 44 - lw - cw });
+
+  let y = 34 + 6;
+  if (!workers.length) text(ctx, 'waiting for workers…', 16, y + 14, { size: 11, color: DIM });
+  workers.forEach((w, i) => {
+    const st = w.state || 'running';
+    const col = STATE_COLOR[st] || WARN;
+    const ly = y + 15;
+    dot(ctx, 20, ly - 4, 3, col, st === 'running' ? pulse : 1);
+    text(ctx, w.name || 'Worker', 32, ly, { size: 12, weight: 600, max: 72 });
+    const el = laneElapsed(m, w, t);
+    const ew = el != null ? text(ctx, mmss(el), SW_W - 16, ly, { size: 10.5, font: MONO, color: DIM, align: 'right' }) + 8 : 0;
+    const note = w.note || (st === 'running' ? 'working' : st);
+    text(ctx, note, 108, ly, { size: 11.5, color: st === 'failed' ? BAD : MID, max: SW_W - 124 - ew });
+    y += LANE_H;
+    const tl = tails[i];
+    if (tl.length) {
+      // tool tail: a thin rail on the left, newest brightest
+      ctx.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx.fillRect(20, y - 2, 1, tl.length * TAIL_H + 2);
+      tl.forEach((e, k) => {
+        const ty = y + 10 + k * TAIL_H;
+        ctx.globalAlpha = 0.4 + 0.6 * ((k + 1) / tl.length);
+        text(ctx, e.tool, 32, ty, { size: 10, font: MONO, color: TOOL_COLOR[e.tool] || MID, max: 44 });
+        text(ctx, e.target, 80, ty, { size: 10, font: MONO, color: MID, max: SW_W - 96 });
+        ctx.globalAlpha = 1;
+      });
+      y += tl.length * TAIL_H + 6;
+    }
+  });
+
+  if (foot.length) {
+    y += 4;
     ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-    ctx.beginPath(); ctx.moveTo(16, y); ctx.lineTo(CC_W - 16, y); ctx.stroke();
-    y += 2;
-    tail.forEach((e, i) => {
-      y += 14;
-      ctx.globalAlpha = 0.4 + 0.6 * ((i + 1) / tail.length);
-      text(ctx, e.tool, 16, y, { size: 10.5, font: MONO, color: TOOL_COLOR[e.tool] || MID, max: 52 });
-      text(ctx, e.target, 66, y, { size: 10.5, font: MONO, color: MID, max: CC_W - 82 });
-      ctx.globalAlpha = 1;
-    });
+    ctx.beginPath(); ctx.moveTo(16, y); ctx.lineTo(SW_W - 16, y); ctx.stroke();
+    y += 4;
+    for (const [label, p] of foot) {
+      y += 16;
+      const rw = text(ctx, label.toLowerCase() + ':', 16, y, { size: 10.5, weight: 600, color: ACCENT });
+      const steps = p.steps != null ? ` (${p.steps} step${p.steps === 1 ? '' : 's'})` : '';
+      text(ctx, `${p.title || 'procedure'}${steps}`, 22 + rw, y, { size: 11, color: MID, max: SW_W - 38 - rw });
+      y += 2;
+    }
   }
-  y += 20;
-  const foot = m.session_url ? host(m.session_url) : `${m.mode || 'local'} · claude -p${m.pr ? ` · PR #${m.pr}` : ''}`;
-  text(ctx, m.session_url ? 'SESSION' : 'RUNNER', 16, y, { size: 9, weight: 600, color: DIM, track: 1.2 });
-  text(ctx, foot, 72, y, { size: 10.5, font: MONO, color: m.session_url ? ACCENT : DIM, max: CC_W - 88 });
   return c;
 }
 
@@ -537,7 +568,7 @@ export class DesktopDev {
   draw(ctx, placed, vr) {
     const hud = this.hud;
     this.hits = [];
-    const gh = hud.devGithub, ss = hud.devSession;
+    const gh = hud.devGithub, ss = hud.qmSwarm;
     const t = performance.now();
     this._cockpit(ctx, placed, vr, gh, ss, t);
     this._preview(ctx, t);
@@ -570,7 +601,7 @@ export class DesktopDev {
     const hud = this.hud;
     if (!gh && !ss) return;
     if (gh && this.cache.gh !== gh) { this.cache.gh = gh; this.cache.ghCanvas = drawGithubPanel(gh); }
-    if (ss && (this.cache.s !== ss || t - this.cache.sT > 120)) { this.cache.s = ss; this.cache.sT = t; this.cache.sCanvas = drawSessionPanel(ss, t); }
+    if (ss && (this.cache.s !== ss || t - this.cache.sT > 120)) { this.cache.s = ss; this.cache.sT = t; this.cache.sCanvas = drawSwarmPanel(ss, t); }
     const card = [...placed.values()][0];
     const b = card && [...placed.keys()].map((id) => hud.bboxFor(id)).find(Boolean);
     const put = (c, x, y) => { const w = c.width / S, h = c.height / S; x = Math.max(8, Math.min(innerWidth - w - 8, x)); y = Math.max(8, Math.min(innerHeight - h - 8, y)); ctx.drawImage(c, x, y, w, h); return { x, y, w, h }; };
@@ -704,10 +735,10 @@ export class XrDev {
       // left of the person: card sits right of their head, so skip past the card and a body width
       place('gh', card ? -(cardHalf + 0.55 + m.w / 2) : -(0.04 + m.w / 2));
     } else this._drop('gh');
-    if (hud.devSession) {
-      const s = hud.devSession;
+    if (hud.qmSwarm) {
+      const s = hud.qmSwarm;
       const sec = Math.floor(t / 250);
-      const m = this._mesh('ss', `${s._rx}:${sec}`, () => drawSessionPanel(s, t));
+      const m = this._mesh('ss', `${s._rx}:${sec}`, () => drawSwarmPanel(s, t));
       place('ss', card ? cardHalf + 0.06 + m.w / 2 : 0.04 + m.w / 2);
     } else this._drop('ss');
     this._preview(head, headQ, t);
@@ -777,108 +808,93 @@ export class XrDev {
 }
 
 // ---------------------------------------------------------------- mock (?mock=1)
+//
+// Current demo: Matthew asks Stephen for a `!recap` command in Opal's Discord bot. QM's swarm spins up
+// (Context / Product / Builder), Claude Code inside the Builder worker edits discord-bot/core/bot.py and
+// opens PR #6; Memorable learns the procedure. Later a second request (`!streak`) recalls it.
 
-const HUNK = [
-  { t: ' ', s: '  return (' },
-  { t: ' ', s: '    <Steps>' },
-  { t: '-', s: '      <Step title="Paste API key" />' },
-  { t: '+', s: '      <Step title="Connect GitHub" onClick={oauth} />' },
-  { t: '+', s: '      <Step title="Pick a repo" hint="we detect the stack" />' },
-  { t: ' ', s: '    </Steps>' },
+const HOOK = 'feature_request.detected';
+const RECAP = [
+  { t: ' ', s: '@bot.command(name="status")' },
+  { t: ' ', s: 'async def status(ctx):' },
+  { t: ' ', s: '    ...' },
+  { t: '+', s: '@bot.command(name="recap")' },
+  { t: '+', s: 'async def recap(ctx, hours: int = 12):' },
+  { t: '+', s: '    """What you missed, in Opal\'s voice."""' },
+  { t: '+', s: '    msgs = await recent_messages(ctx.channel, hours)' },
 ];
-const TAIL = [
-  ['Read', 'CLAUDE.md'], ['Glob', 'app/src/**/*.tsx'], ['Read', 'app/src/onboarding/Setup.tsx'],
-  ['Edit', 'app/src/onboarding/Setup.tsx'], ['Edit', 'app/src/onboarding/steps.ts'], ['Bash', 'npm run build'],
-  ['Bash', 'git commit -m "one-click GitHub connect"'], ['Bash', 'git push -u origin world/github-connect-b4821'],
-  ['Bash', 'gh pr create --base main --title "[WORLD] One-click…'],
+const STREAK = [
+  { t: ' ', s: '@bot.command(name="recap")' },
+  { t: ' ', s: 'async def recap(ctx, hours: int = 12):' },
+  { t: '+', s: '@bot.command(name="streak")' },
+  { t: '+', s: 'async def streak(ctx, member: discord.Member = None):' },
+  { t: '+', s: '    days = await memory.active_streak(member or ctx.author)' },
 ];
-const STEPS = ['reading CLAUDE.md', 'searching code', 'reading Setup.tsx', 'editing Setup.tsx', 'editing steps.ts',
-  'building', 'committing', 'pushing branch', 'opening PR'];
-const FEATURE = 'One-click GitHub connect in setup';
 
-function session(i, state, extra = {}) {
-  return { kind: 'dev_session', job_id: 'b48211', feature: FEATURE, state, mode: 'local',
-    step: STEPS[Math.min(i, STEPS.length - 1)], elapsed_s: 4 + i * 11,
-    tail: TAIL.slice(0, i + 1).map(([tool, target]) => ({ tool, target })),
-    procedure: { title: 'ship_customer_feature_request', steps: 7, score: 0.83 }, session_url: null, pr: null, ...extra };
+const lane = (name, state, note, extra = {}) => ({ name, state, note, ...extra });
+const tail = (...rows) => rows.map(([tool, target]) => ({ tool, target }));
+const T_READ = ['Read', 'discord-bot/core/bot.py'];
+const T_EDIT = ['Edit', 'discord-bot/core/bot.py'];
+const T_CHECK = ['Bash', 'python3 -m compileall -q core utils'];
+
+function swarm(event_id, workers, extra = {}) {
+  return { kind: 'qm_swarm', hook: HOOK, event_id, anchor_track_id: 3, workers, ...extra };
 }
 
-function github(preview, checks) {
-  return { kind: 'dev_github', repo: 'qtzx06/opal', prs: [
-    { number: 12, title: `[WORLD] ${FEATURE}`, branch: 'world/github-connect-b48211', state: 'open', checks,
-      additions: 38, deletions: 9, files: ['app/src/onboarding/Setup.tsx', 'app/src/onboarding/steps.ts', 'app/src/lib/github.ts'],
-      preview_url: preview ? 'https://opal-git-world-github-connect-qtzx06.vercel.app' : null,
-      url: 'https://github.com/qtzx06/opal/pull/12', hunk_file: 'app/src/onboarding/Setup.tsx', hunk: HUNK },
-    { number: 11, title: '[WORLD] Dark mode toggle on landing', branch: 'world/dark-mode-b31002', state: 'open', checks: 'pass',
-      additions: 21, deletions: 4, files: ['app/src/landing/Nav.tsx'], preview_url: null, url: '', hunk: [] },
-  ] };
-}
+const CTX = lane('Context', 'done', 'Matthew · lifelong friend');
+const RUN1 = [
+  [6000, swarm('evt_recap', [lane('Context', 'running', 'searching GBrain'), lane('Product', 'running', 'speccing !recap'),
+    lane('Builder', 'running', 'queued: Add !recap command', { elapsed_s: 0, tail: [] })])],
+  [7400, swarm('evt_recap', [CTX, lane('Product', 'running', 'speccing !recap'),
+    lane('Builder', 'running', 'cloning repo', { elapsed_s: 1, tail: [] })])],
+  [8600, swarm('evt_recap', [CTX, lane('Product', 'done', 'spec: !recap, 2 checks'),
+    lane('Builder', 'running', 'reading bot.py', { elapsed_s: 6, tail: tail(T_READ) })])],
+  [10200, swarm('evt_recap', [CTX, lane('Product', 'done', 'spec: !recap, 2 checks'),
+    lane('Builder', 'running', 'editing bot.py', { elapsed_s: 19, tail: tail(T_READ, T_EDIT) })])],
+  [11800, swarm('evt_recap', [CTX, lane('Product', 'done', 'spec: !recap, 2 checks'),
+    lane('Builder', 'running', 'verifying', { elapsed_s: 41, tail: tail(T_READ, T_EDIT, T_CHECK) })])],
+  [13400, swarm('evt_recap', [CTX, lane('Product', 'done', 'spec: !recap, 2 checks'),
+    lane('Builder', 'running', 'opening PR', { elapsed_s: 55, tail: tail(T_READ, T_EDIT, T_CHECK) })])],
+  [15200, swarm('evt_recap', [CTX, lane('Product', 'done', 'spec: !recap, 2 checks'),
+    lane('Builder', 'done', 'PR #6 opened', { elapsed_s: 63, tail: tail(T_READ, T_EDIT, T_CHECK), pr: 6 })])],
+  [17600, swarm('evt_recap', [CTX, lane('Product', 'done', 'spec: !recap, 2 checks'),
+    lane('Builder', 'done', 'PR #6 opened', { elapsed_s: 63, tail: tail(T_READ, T_EDIT, T_CHECK), pr: 6 })],
+  { learned: { title: 'add discord command', steps: 5 } })],
+  [17700, { kind: 'memory_event', text: 'PROCEDURE LEARNED', detail: 'add discord command · saved to GBrain' }],
+];
 
-// Placeholder "screenshot" of the Opal landing with the new How it works section under the hero, drawn at
-// runtime (no base64 blob in the repo). Lazy: only built when the mock actually applies the message.
-let mockShotB64 = null;
-function mockShot() {
-  if (mockShotB64) return mockShotB64;
-  const W = 1280, H = 1600;
-  const c = document.createElement('canvas');
-  c.width = W; c.height = H;
-  const g = c.getContext('2d');
-  const F = (w, px) => `${w} ${px}px ${FONT}`;
-  g.fillStyle = '#fbfaf7'; g.fillRect(0, 0, W, H);
-  // nav
-  g.fillStyle = '#111'; g.font = F(700, 28); g.fillText('opal', 64, 62);
-  g.font = F(500, 18); g.fillStyle = '#555';
-  ['Product', 'Pricing', 'Docs'].forEach((s, i) => g.fillText(s, 820 + i * 110, 60));
-  g.fillStyle = '#111'; g.beginPath(); g.roundRect(1110, 32, 110, 44, 22); g.fill();
-  g.fillStyle = '#fff'; g.font = F(600, 16); g.fillText('Sign in', 1136, 60);
-  // hero
-  const hg = g.createLinearGradient(0, 110, 0, 700);
-  hg.addColorStop(0, '#eef4ff'); hg.addColorStop(1, '#fbfaf7');
-  g.fillStyle = hg; g.fillRect(0, 110, W, 600);
-  g.fillStyle = '#111'; g.font = F(700, 76); g.textAlign = 'center';
-  g.fillText('Ship the thing,', W / 2, 300); g.fillText('not the setup.', W / 2, 390);
-  g.fillStyle = '#555'; g.font = F(400, 24);
-  g.fillText('Opal turns a repo into a running product in one click.', W / 2, 460);
-  g.fillStyle = '#3b5bfd'; g.beginPath(); g.roundRect(W / 2 - 110, 510, 220, 60, 30); g.fill();
-  g.fillStyle = '#fff'; g.font = F(600, 20); g.fillText('Get started', W / 2, 548);
-  // the new section (what the PR adds), outlined so it reads as "new" in the demo
-  const sy = 760;
-  g.strokeStyle = '#3b5bfd'; g.setLineDash([10, 8]); g.lineWidth = 3;
-  g.beginPath(); g.roundRect(40, sy - 30, W - 80, 560, 24); g.stroke(); g.setLineDash([]);
-  g.fillStyle = '#3b5bfd'; g.font = F(700, 16); g.fillText('NEW', W / 2, sy + 20);
-  g.fillStyle = '#111'; g.font = F(700, 52); g.fillText('How it works', W / 2, sy + 90);
-  const steps = [['1', 'Connect GitHub', 'Pick a repo. We detect the stack.'], ['2', 'Preview every PR', 'Each branch gets a live URL.'],
-    ['3', 'Get paid', 'Payouts explained up front.']];
-  steps.forEach(([n, h, d], i) => {
-    const x = 100 + i * 370, y = sy + 150;
-    g.fillStyle = '#fff'; g.beginPath(); g.roundRect(x, y, 330, 300, 20); g.fill();
-    g.strokeStyle = '#e4e4e0'; g.lineWidth = 2; g.stroke();
-    g.fillStyle = '#eef1ff'; g.beginPath(); g.arc(x + 165, y + 80, 36, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#3b5bfd'; g.font = F(700, 30); g.fillText(n, x + 165, y + 91);
-    g.fillStyle = '#111'; g.font = F(700, 26); g.fillText(h, x + 165, y + 170);
-    g.fillStyle = '#666'; g.font = F(400, 18); g.fillText(d, x + 165, y + 210);
-  });
-  // rest of the page
-  g.fillStyle = '#111'; g.fillRect(0, 1380, W, 220);
-  g.fillStyle = '#fff'; g.font = F(700, 36); g.fillText('Loved by builders at YC', W / 2, 1480);
-  g.textAlign = 'left';
-  mockShotB64 = c.toDataURL('image/jpeg', 0.82).split(',')[1];
-  return mockShotB64;
-}
+const RECALLED = { recalled: { title: 'add discord command', steps: 5 } };
+const RUN2 = [
+  [22500, { kind: 'memory_event', text: 'FEATURE REQUEST REMEMBERED', detail: 'Opal bot · !streak' }],
+  [23500, swarm('evt_streak', [lane('Context', 'running', 'searching GBrain'), lane('Product', 'running', 'speccing !streak'),
+    lane('Builder', 'running', 'queued: Add !streak command', { elapsed_s: 0, tail: [] })], RECALLED)],
+  [23600, { kind: 'memory_event', text: 'RECALLED PROCEDURE', detail: 'add discord command · 5 steps' }],
+  [25200, swarm('evt_streak', [CTX, lane('Product', 'done', 'spec: !streak, 2 checks'),
+    lane('Builder', 'running', 'editing bot.py', { elapsed_s: 9, tail: tail(T_READ, T_EDIT) })], RECALLED)],
+  [27000, swarm('evt_streak', [CTX, lane('Product', 'done', 'spec: !streak, 2 checks'),
+    lane('Builder', 'running', 'verifying', { elapsed_s: 24, tail: tail(T_READ, T_EDIT, T_CHECK), pr: 7 })], RECALLED)],
+  [28400, swarm('evt_streak', [CTX, lane('Product', 'done', 'spec: !streak, 2 checks'),
+    lane('Builder', 'done', 'PR #7 opened', { elapsed_s: 31, tail: tail(T_READ, T_EDIT, T_CHECK), pr: 7 })], RECALLED)],
+];
 
-const MOCK_SHOT = { kind: 'preview_shot', job_id: 'b451461', pr: 5, title: '[WORLD] Add How it works section under hero',
-  url: 'http://192.168.1.20:4301/', w: 1280, h: 1600, get jpeg_b64() { return mockShot(); } };
+const PR6 = (checks) => ({ number: 6, title: '[WORLD] Add !recap command', branch: 'world/add-recap-command', state: 'open', checks,
+  additions: 24, deletions: 0, files: ['discord-bot/core/bot.py'], preview_url: null,
+  url: 'https://github.com/qtzx06/opal/pull/6', hunk_file: 'discord-bot/core/bot.py', hunk: RECAP });
+const PR7 = (checks) => ({ number: 7, title: '[WORLD] Add !streak command', branch: 'world/add-streak-command', state: 'open', checks,
+  additions: 17, deletions: 0, files: ['discord-bot/core/bot.py'], preview_url: null,
+  url: 'https://github.com/qtzx06/opal/pull/7', hunk_file: 'discord-bot/core/bot.py', hunk: STREAK });
+const github = (...prs) => ({ kind: 'dev_github', repo: 'qtzx06/opal', prs });
 
 // [ms, msg] entries merged into mock.js DEMO_SCRIPT. Deltas attach to the only card.
 export const DEV_SCRIPT = [
-  [2200, { kind: 'context_delta', person_id: 'matthew', delta_kind: 'preference', text: '+ wants payouts explained up front' }],
-  [3600, { kind: 'context_delta', person_id: 'matthew', delta_kind: 'fact', text: '+ found the landing page confusing' }],
-  [7200, { kind: 'context_delta', person_id: 'matthew', delta_kind: 'open_loop_you_owe', text: '+ send him the preview link' }],
-  ...STEPS.map((_, i) => [9000 + i * 900, session(i, 'running')]),
-  [13500, github(false, 'pending')],
-  [17200, session(8, 'pr_open', { step: 'PR #12 opened · building preview', pr: 12 })],
-  [19500, github(true, 'pass')],
-  [19600, session(8, 'done', { step: 'PR #12 · preview ready', pr: 12, elapsed_s: 96 })],
-  [21000, MOCK_SHOT], // world service served + screenshotted the branch: pops in front of the wearer
-  [34000, session(8, 'done', { step: 'PR #12 · preview ready', pr: 12, elapsed_s: 96 })], // periodic re-send; also keeps the loop long enough to play with the preview
+  [2200, { kind: 'context_delta', person_id: 'matthew', delta_kind: 'preference', text: '+ lives in the Opal Discord' }],
+  [3600, { kind: 'context_delta', person_id: 'matthew', delta_kind: 'fact', text: '+ misses what happened overnight' }],
+  [7200, { kind: 'context_delta', person_id: 'matthew', delta_kind: 'open_loop_you_owe', text: '+ ping him when !recap ships' }],
+  ...RUN1,
+  [13000, github(PR6('pending'))],
+  [15600, github(PR6('pass'))],
+  ...RUN2,
+  [26800, github(PR7('pending'), PR6('pass'))],
+  [28800, github(PR7('pass'), PR6('pass'))],
+  [34000, RUN2[RUN2.length - 1][1]], // periodic re-send, like the world service's 10s resend
 ];

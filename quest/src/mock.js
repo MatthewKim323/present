@@ -7,21 +7,10 @@ import { VISION_SCRIPT, VISION_LEAD, mockResolve } from './visionfx.js';
 const BASE_SCRIPT = [
   [800, { kind: 'person_card', anchor_track_id: 3, person_id: 'matthew', name: 'MATTHEW', subtitle: 'lifelong friend · builder at Kali Labs',
     last: 'friends since 2019 · co-building at YC', owes_you: 'feedback on Opal', you_owe: 'Discord invite' }],
-  [4000, { kind: 'memory_event', text: 'FEATURE REQUEST REMEMBERED', detail: 'Opal landing · How it works' }],
-  [5200, { kind: 'memory_event', text: 'COMMITMENT REMEMBERED', detail: 'send Matthew the Discord invite' }],
-  [6000, { kind: 'agent_activity', anchor_track_id: 3, hook: 'feature_request.detected', workers: [
-    { name: 'Context', state: 'running', note: 'searching GBrain' },
-    { name: 'Product', state: 'running', note: 'speccing How it works section' },
-    { name: 'Builder', state: 'running', note: 'queued: How it works section' } ] }],
-  [8500, { kind: 'agent_activity', anchor_track_id: 3, hook: 'feature_request.detected', workers: [
-    { name: 'Context', state: 'done', note: 'Matthew · lifelong friend · Opal user' },
-    { name: 'Product', state: 'done', note: '3 steps under hero, 2 checks' },
-    { name: 'Builder', state: 'running', note: 'coding: How it works section' } ] }],
-  [11000, { kind: 'agent_activity', anchor_track_id: 3, hook: 'feature_request.detected', workers: [
-    { name: 'Context', state: 'done', note: 'Matthew · lifelong friend · Opal user' },
-    { name: 'Product', state: 'done', note: '3 steps under hero, 2 checks' },
-    { name: 'Builder', state: 'done', note: 'PR #5 opened on qtzx06/opal' } ] }],
-  ...DEV_SCRIPT, // dev cockpit: context_delta, dev_session, dev_github
+  [4000, { kind: 'memory_event', text: 'FEATURE REQUEST REMEMBERED', detail: 'Opal bot · !recap' }],
+  [5200, { kind: 'memory_event', text: 'COMMITMENT REMEMBERED', detail: 'ping Matthew when !recap ships' }],
+  // the swarm itself is the QM SWARM panel (qm_swarm in DEV_SCRIPT); no separate agent_activity entries
+  ...DEV_SCRIPT, // dev cockpit: context_delta, qm_swarm, dev_github
 ];
 
 export const DEMO_SCRIPT = [...VISION_SCRIPT, ...BASE_SCRIPT.map(([t, m]) => [t + VISION_LEAD, m])].sort((a, b) => a[0] - b[0]);
