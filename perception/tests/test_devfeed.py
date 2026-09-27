@@ -12,17 +12,17 @@ index 1..2 100644
 @@ -1,3 +1,3 @@
 -  "version": "1"
 +  "version": "2"
-diff --git a/app/src/Onboarding.tsx b/app/src/Onboarding.tsx
+diff --git a/app/src/landing/LandingPage.tsx b/app/src/landing/LandingPage.tsx
 index 3..4 100644
---- a/app/src/Onboarding.tsx
-+++ b/app/src/Onboarding.tsx
-@@ -10,6 +10,7 @@ export function Onboarding() {
+--- a/app/src/landing/LandingPage.tsx
++++ b/app/src/landing/LandingPage.tsx
+@@ -10,6 +10,7 @@ export default function LandingPage() {
    return (
-     <Steps>
--      <Step title="Canvas" />
-+      <Step title="Connect Slack" />
-+      <Step title="Invite team" token="ghp_abcdefghijklmnop" />
-     </Steps>
+     <main>
+-      <HeroSection />
++      <HeroSection isLoaded />
++      <HowItWorks steps={3} token="ghp_abcdefghijklmnop" />
+     </main>
    );
 @@ -40,2 +41,2 @@
 -  old
@@ -30,9 +30,9 @@ index 3..4 100644
 """
 
 PRS = [
-    {"number": 7, "title": "[WORLD] Add Slack onboarding", "headRefName": "world/add-slack-b1", "headRefOid": "sha7",
+    {"number": 7, "title": "[WORLD] Add How it works section under hero", "headRefName": "world/add-how-it-works-section-under-hero", "headRefOid": "sha7",
      "isDraft": False, "additions": 42, "deletions": 8, "url": "https://github.com/qtzx06/opal/pull/7",
-     "files": [{"path": "app/src/Onboarding.tsx"}, {"path": "package-lock.json"}],
+     "files": [{"path": "app/src/landing/LandingPage.tsx"}, {"path": "package-lock.json"}],
      "statusCheckRollup": [{"conclusion": "SUCCESS"}, {"state": "PENDING"}]},
     {"number": 6, "title": "chore: unrelated", "headRefName": "x", "headRefOid": "sha6", "files": []},
     {"number": 5, "title": "[WORLD] Older thing", "headRefName": "world/older", "headRefOid": "sha5",
@@ -74,9 +74,9 @@ def make(gh=None):
 
 def test_first_hunk_skips_lockfile_and_redacts():
     f, hunk = first_hunk(DIFF)
-    assert f == "app/src/Onboarding.tsx"
+    assert f == "app/src/landing/LandingPage.tsx"
     assert [h["t"] for h in hunk[:4]] == [" ", " ", "-", "+"]
-    assert hunk[2]["s"].strip() == '<Step title="Canvas" />'
+    assert hunk[2]["s"].strip() == '<HeroSection />'
     assert all("ghp_" not in h["s"] for h in hunk)
     assert all(h["s"] not in ("  old", "  new") for h in hunk)  # only the first hunk
 
@@ -98,26 +98,26 @@ def test_github_msg_filters_world_prs_and_hunks_newest():
     assert [p["number"] for p in msg["prs"]] == [7, 5]
     p7, p5 = msg["prs"]
     assert p7["checks"] == "pending" and p7["preview_url"] == "https://opal-git-x.vercel.app"
-    assert p7["files"] == ["app/src/Onboarding.tsx", "package-lock.json"]
-    assert p7["hunk_file"] == "app/src/Onboarding.tsx" and p7["hunk"]
+    assert p7["files"] == ["app/src/landing/LandingPage.tsx", "package-lock.json"]
+    assert p7["hunk_file"] == "app/src/landing/LandingPage.tsx" and p7["hunk"]
     assert p5["state"] == "draft" and p5["hunk"] == [] and p5["checks"] == "none"
     feed.close()
 
 
 def test_session_tail_from_stream_parser_tap():
     feed, b, _ = make()
-    job = builder_mod.Job(id="b1", event_id=None, spec={"feature": "Add Slack onboarding"}, repo="r", branch="w", mode="local",
-                          state="running", note="editing Onboarding.tsx")
+    job = builder_mod.Job(id="b1", event_id=None, spec={"feature": "Add How it works section under hero"}, repo="r", branch="w", mode="local",
+                          state="running", note="editing LandingPage.tsx")
     job.recalled = {"title": "ship feature", "steps": [{}, {}, {}], "score": 0.8}
     b.jobs["b1"] = job
     parser = StreamParser("/tmp/clone", on_tool=lambda n, i: [t("b1", n, i) for t in builder_mod.TOOL_TAPS])
     parser.feed(json.dumps({"type": "assistant", "message": {"content": [
         {"type": "tool_use", "id": "1", "name": "Edit",
-         "input": {"file_path": "/tmp/clone/app/src/Onboarding.tsx", "old_string": "SECRET CONTENT", "new_string": "x"}},
+         "input": {"file_path": "/tmp/clone/app/src/landing/LandingPage.tsx", "old_string": "SECRET CONTENT", "new_string": "x"}},
         {"type": "tool_use", "id": "2", "name": "Bash", "input": {"command": "npm run build"}}]}}))
     s = feed.session_msg()
-    assert s["kind"] == "dev_session" and s["state"] == "running" and s["step"] == "editing Onboarding.tsx"
-    assert s["tail"] == [{"tool": "Edit", "target": "app/src/Onboarding.tsx"}, {"tool": "Bash", "target": "npm run build"}]
+    assert s["kind"] == "dev_session" and s["state"] == "running" and s["step"] == "editing LandingPage.tsx"
+    assert s["tail"] == [{"tool": "Edit", "target": "app/src/landing/LandingPage.tsx"}, {"tool": "Bash", "target": "npm run build"}]
     assert "SECRET" not in json.dumps(s)
     assert s["procedure"] == {"title": "ship feature", "steps": 3, "score": 0.8}
     assert feed.active()

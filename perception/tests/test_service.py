@@ -26,18 +26,18 @@ def make_app(tmp_path):
 def test_post_event_fans_out_to_hud(tmp_path):
     svc, app = make_app(tmp_path)
     with TestClient(app) as c, c.websocket_connect("/ws/hud") as hud:
-        r = c.post("/events", json={"type": "customer_feedback.detected", "people": [{"id": "alex", "name": "Alex", "enrolled": True}],
-                                    "payload": {"product": "Syla", "feature": "Canvas onboarding", "sentiment": "neg", "feedback": "confusing"}})
+        r = c.post("/events", json={"type": "customer_feedback.detected", "people": [{"id": "matthew", "name": "Matthew", "enrolled": True}],
+                                    "payload": {"product": "Opal", "feature": "Landing page", "sentiment": "neg", "feedback": "unclear payouts"}})
         assert r.status_code == 200
-        assert hud.receive_json() == {"kind": "memory_event", "text": "CUSTOMER FEEDBACK REMEMBERED", "detail": "Syla Canvas onboarding"}
-        c.post("/events", json={"type": "commitment.detected", "people": [{"id": "alex"}],
-                                "payload": {"actor": "Matthew", "recipient": "Alex", "commitment": "Send updated onboarding demo"}})
+        assert hud.receive_json() == {"kind": "memory_event", "text": "CUSTOMER FEEDBACK REMEMBERED", "detail": "Opal Landing page"}
+        c.post("/events", json={"type": "commitment.detected", "people": [{"id": "matthew"}],
+                                "payload": {"actor": "Stephen", "recipient": "Matthew", "commitment": "Send payouts walkthrough"}})
         hud.receive_json()
-        c.post("/events", json={"type": "person.encountered", "payload": {"track_id": 3, "person_id": "alex", "label": "Alex", "bbox": [0, 0, 1, 1], "match_score": 0.7}})
+        c.post("/events", json={"type": "person.encountered", "payload": {"track_id": 3, "person_id": "matthew", "label": "Matthew", "bbox": [0, 0, 1, 1], "match_score": 0.7}})
         card = hud.receive_json()
-        assert card["kind"] == "person_card" and card["name"] == "ALEX" and card["anchor_track_id"] == 3
-        assert card["you_owe"] == "Send updated onboarding demo"
-        assert card["last"] == "Syla Canvas onboarding"
+        assert card["kind"] == "person_card" and card["name"] == "MATTHEW" and card["anchor_track_id"] == 3
+        assert card["you_owe"] == "Send payouts walkthrough"
+        assert card["last"] == "Opal Landing page"
     assert (tmp_path / "events.jsonl").read_text().count("\n") == 3
 
 
@@ -51,10 +51,10 @@ def test_post_event_rejects_bad_type(tmp_path):
 def test_debug_utterance_and_end(tmp_path):
     _, app = make_app(tmp_path)
     with TestClient(app) as c:
-        c.post("/debug/utterance", json={"text": "hello", "name": "Alex"})
+        c.post("/debug/utterance", json={"text": "hello", "name": "Matthew"})
         evs = c.post("/debug/end-conversation").json()["events"]
         assert [e["type"] for e in evs] == ["conversation.completed"]
-        assert evs[0]["people"][1]["name"] == "Alex"
+        assert evs[0]["people"][1]["name"] == "Matthew"
 
 
 class FakeEngine:
@@ -72,21 +72,21 @@ class FakeEngine:
 
 
 def test_vision_identifies_enrolled_and_labels_unknown(rng, tmp_path):
-    alex_c, stranger_c = rng.standard_normal(128), rng.standard_normal(128)
+    matthew_c, stranger_c = rng.standard_normal(128), rng.standard_normal(128)
     store = PeopleStore(tmp_path / "p.json")
-    store.add("Alex", person_embs(rng, alex_c))
+    store.add("Matthew", person_embs(rng, matthew_c))
     eng = FakeEngine()
     v = VisionPipeline(eng, store, enroll_samples=3)
     frame = np.zeros((480, 640, 3), np.uint8)
     events = []
     for i in range(6):
         eng.faces = [Face((100 + i, 100, 80, 80), 0.9, None), Face((400, 100, 80, 80), 0.9, None)]
-        eng.embs = [unit(alex_c + 0.1 * rng.standard_normal(128)), unit(stranger_c)]
+        eng.embs = [unit(matthew_c + 0.1 * rng.standard_normal(128)), unit(stranger_c)]
         events += v.process(frame, ts=i * 0.2).events
     enc = [e for e in events if e["type"] == "person.encountered"]
     assert len(enc) == 2  # debounced: one per track
     labels = {e["payload"]["label"] for e in enc}
-    assert labels == {"Alex", "UNKNOWN PERSON 01"}
+    assert labels == {"Matthew", "UNKNOWN PERSON 01"}
     unknown = next(e for e in enc if e["payload"]["person_id"] is None)
 
     # opt-in: "that's Sam"
