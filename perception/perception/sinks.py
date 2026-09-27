@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
 
@@ -91,14 +92,22 @@ class QMSink:
 
     name = "qm"
 
-    def __init__(self, base_url: str, client: httpx.AsyncClient | None = None, timeout: float = 5.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        client: httpx.AsyncClient | None = None,
+        timeout: float = 5.0,
+        secret: str | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.client = client or httpx.AsyncClient(timeout=timeout)
+        self.secret = secret if secret is not None else os.environ.get("WORLD_HOOKS_SECRET", "")
 
     async def emit(self, event: dict[str, Any]) -> None:
         if not self.base_url:
             return
-        r = await self.client.post(f"{self.base_url}/world-events", json=event)
+        headers = {"authorization": f"Bearer {self.secret}"} if self.secret else {}
+        r = await self.client.post(f"{self.base_url}/world-events", json=event, headers=headers)
         if r.status_code >= 400:
             log.warning("QM rejected %s: %s %s", event["type"], r.status_code, r.text[:200])
 
