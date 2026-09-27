@@ -1,6 +1,8 @@
+import { DEV_SCRIPT } from './devpanels.js';
+
 // Scripted demo sequence (?mock=1). Exercises all three HUD states with no server.
 // Perception re-sends the track every frame; fake that at 1 Hz with a slight sway.
-const TRACKS = Array.from({ length: 17 }, (_, i) => [i * 1000,
+const TRACKS = Array.from({ length: 24 }, (_, i) => [i * 1000,
   { kind: 'track', track_id: 3, bbox: [0.38 + 0.02 * Math.sin(i / 2), 0.18, 0.22, 0.62], label: 'UNKNOWN PERSON 03' }]);
 
 export const DEMO_SCRIPT = [
@@ -21,6 +23,7 @@ export const DEMO_SCRIPT = [
     { name: 'Context', state: 'done', note: 'Alex · Acme · Syla pilot' },
     { name: 'Product', state: 'done', note: 'issue drafted: OAuth onboarding' },
     { name: 'Follow-up', state: 'done', note: 'reply ready, awaiting approval' } ] }],
+  ...DEV_SCRIPT, // dev cockpit: context_delta, dev_session, dev_github
 ].sort((a, b) => a[0] - b[0]);
 
 export function runMock(apply, { loop = true } = {}) {

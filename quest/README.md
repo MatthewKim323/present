@@ -65,6 +65,12 @@ reads the perception service's debug `tracks` stream (it connects to
 `bbox` on `person_card` / `agent_activity`. Bboxes can be pixels (of the sent
 frame) or normalized 0..1.
 
+Dev cockpit (`src/devpanels.js`): also receives `dev_github`, `dev_session` and
+`context_delta`. GitHub panel sits left of the person, Claude Code panel right of
+the card (body-locked in XR, not head-locked); `context_delta` lines fade in under
+the card. Pinching APPROVE / OPEN PREVIEW / COMMENT sends `dev_action`. Hooks in
+the other files are one-liners (grep `devpanels`); `?mock=1` plays it too.
+
 ## Run it (desktop, no headset)
 
 ```bash

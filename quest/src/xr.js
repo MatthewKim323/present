@@ -4,7 +4,8 @@
 // and placing the card at a fixed distance. Crude but good enough for one person
 // in front of you; tune with ?hfov= and ?dist=.
 import * as THREE from 'three';
-import { drawPersonCard, drawMemoryToast, drawAgentActivity, drawStatus, anyRunning } from './panels.js';
+import { drawMemoryToast, drawAgentActivity, drawStatus, anyRunning } from './panels.js';
+import { drawPersonCardPlus as drawPersonCard, deltasAnimating, XrDev } from './devpanels.js';
 
 const M_PER_PX = 0.0012; // panel css px -> meters (300px card ~ 0.36 m)
 
@@ -41,6 +42,7 @@ export class XrHud {
     this.session = session;
     await renderer.xr.setSession(session);
     this.refSpace = renderer.xr.getReferenceSpace();
+    this.dev = new XrDev(this.scene, session, this.hud); // GitHub + Claude Code panels
 
     // Hand pinch (and controller trigger) arrive as `select`.
     session.addEventListener('select', (ev) => this._onSelect(ev));
@@ -71,7 +73,7 @@ export class XrHud {
     for (const [id, msg] of hud.cards) {
       const k = 'card:' + id;
       seen.add(k);
-      const m = this._mesh(k, msg, drawPersonCard);
+      const m = this._mesh(k, msg, drawPersonCard, deltasAnimating(msg));
       const b = hud.bboxFor(id);
       if (b) {
         // right of the person's head
@@ -132,6 +134,7 @@ export class XrHud {
         m.mesh.lookAt(head); // Object3D.lookAt points +z at the target: plane front faces the viewer
       }
     }
+    this.dev.frame(head, headQ, this.meshes, this.config.cardDistance);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -186,6 +189,7 @@ export class XrHud {
     const origin = new THREE.Vector3().setFromMatrixPosition(mtx);
     const dir = new THREE.Vector3(0, 0, -1).transformDirection(mtx);
     this.raycaster.set(origin, dir);
+    if (this.dev.select(this.raycaster)) return;
     const targets = [...this.meshes.values()].filter((m) => m.mesh.userData.track != null).map((m) => m.mesh);
     const hit = this.raycaster.intersectObjects(targets, false)[0];
     if (hit) { this.onPinch(hit.object.userData.track); return; }

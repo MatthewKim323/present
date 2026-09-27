@@ -4,6 +4,7 @@ import { HudState } from './hud.js';
 import { DesktopHud } from './desktop.js';
 import { XrHud } from './xr.js';
 import { runMock } from './mock.js';
+import { setDevSender } from './devpanels.js';
 import { listCameras, pickCamera, openCamera, openMic, FrameGrabber, MicStreamer } from './capture.js';
 
 const $ = (id) => document.getElementById(id);
@@ -24,6 +25,7 @@ const link = new Link(config.wsUrl, {
   onMessage: (m) => hud.apply(m),
   onStatus: (s) => log(`ws ${s} ${config.wsUrl}`),
 });
+setDevSender((m) => { link.send(m); log(`-> ${JSON.stringify(m)}`); });
 if (config.mock) runMock((m) => hud.apply(m));
 
 const trackArg = (id) => (id == null ? null : /^\d+$/.test(String(id)) ? Number(id) : id);

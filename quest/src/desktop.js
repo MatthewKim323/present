@@ -1,5 +1,6 @@
 // Desktop mode: HUD composited over the webcam feed. Same panels as XR.
-import { drawPersonCard, drawMemoryToast, drawAgentActivity, anyRunning } from './panels.js';
+import { drawMemoryToast, drawAgentActivity, anyRunning } from './panels.js';
+import { drawPersonCardPlus as drawPersonCard, deltasAnimating, DesktopDev } from './devpanels.js';
 
 export class DesktopHud {
   constructor({ canvas, video, hud, onPinch }) {
@@ -11,10 +12,12 @@ export class DesktopHud {
     this.cache = new Map();
     this.hits = [];
     this.running = false;
+    this.dev = new DesktopDev(hud);
     window.addEventListener('resize', () => this._resize());
     // Click a card (or a person box) = pinch on that track.
     window.addEventListener('click', (e) => {
-      if (!this.running || e.target.closest('#ui')) return;
+      if (!this.running || e.target.closest('#ui') || e.target.closest('#dev-preview')) return;
+      if (this.dev.click(e.clientX, e.clientY)) return;
       const hit = this.hits.find((h) => e.clientX >= h.x && e.clientX <= h.x + h.w && e.clientY >= h.y && e.clientY <= h.y + h.h);
       if (hit) this.onPinch(hit.track);
     });
@@ -75,7 +78,7 @@ export class DesktopHud {
 
     let freeY = 80;
     for (const [id, msg] of hud.cards) {
-      const c = this._raster('card:' + id, msg, drawPersonCard);
+      const c = deltasAnimating(msg) ? drawPersonCard(msg) : this._raster('card:' + id, msg, drawPersonCard);
       const w = c.width / 2, h = c.height / 2;
       const b = hud.bboxFor(id);
       let x, y;
@@ -102,6 +105,8 @@ export class DesktopHud {
       ctx.drawImage(c, x, y, w, h);
       this.hits.push({ track: id, x, y, w, h });
     }
+
+    this.dev.draw(ctx, placed, vr);
 
     let ty = innerHeight - 56;
     for (const t of hud.liveToasts().reverse()) {

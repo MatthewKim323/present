@@ -1,6 +1,8 @@
 // HUD state: the three visual states from CLAUDE.md, keyed by track.
 // Renderer-agnostic. Desktop and XR both read from this.
 
+import { applyDev, withDeltas } from './devpanels.js';
+
 const TOAST_MS = 4200;
 const TRACK_STALE_MS = 4000;
 
@@ -22,6 +24,7 @@ export class HudState {
   // and an optional `bbox` directly on person_card / agent_activity.
   apply(msg) {
     if (!msg || typeof msg !== 'object') return;
+    if (applyDev(this, msg)) { this.touch(); return; } // dev cockpit + context_delta (devpanels.js)
     if (msg.type === 'person.encountered' && msg.payload) {
       const p = msg.payload;
       this._track(p.track_id, p.bbox, p.label);
@@ -30,7 +33,7 @@ export class HudState {
     switch (msg.kind) {
       case 'person_card':
         if (msg.bbox) this._track(msg.anchor_track_id, msg.bbox, msg.name);
-        this.cards.set(key(msg.anchor_track_id), { ...msg, t: now() });
+        this.cards.set(key(msg.anchor_track_id), withDeltas(this, { ...msg, t: now() }));
         break;
       case 'memory_event':
         this.toasts.push({ text: msg.text, detail: msg.detail, t: now() });
