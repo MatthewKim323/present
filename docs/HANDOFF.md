@@ -23,6 +23,10 @@ Read CLAUDE.md, contracts/EVENTS.md, docs/SPONSORS.md, docs/QM.md first.
 - Seeds in `seed/`, TODO(matt) placeholders for real relationship facts (never shown on HUD). Before each take: `cd perception && uv run python scripts/seed_gbrain.py --reset`.
 - NOT done: calendar grounding (`calendar:read`) was blocked by the permission classifier because the approval came relayed through an agent, not from matt in that session. `here` comes from `WORLD_SITUATION` instead. Timeline rows can't be deleted via MCP; `--reset` stamps `reset_at` so older "seen by" rows are ignored.
 
+## Builder decision (matt, 2026-09-27)
+
+No cloud Claude Code (routines are gone from the code). QM is the execution layer and the interface; Claude Code is only the engine inside QM's Builder worker, run locally as headless `claude -p` (`perception/builder.py`). The HUD shows one `qm_swarm` panel (Context / Product / Builder lanes, Builder tool tail, recalled/learned procedure), see contracts/EVENTS.md.
+
 ## Blockers on matt
 
 1. ~~`MEMORABLE_API_KEY`~~ DONE via device flow, lives in `.env.memorable` (gitignored). `set -a; . ./.env.memorable; set +a` to load.

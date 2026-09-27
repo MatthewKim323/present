@@ -335,7 +335,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
 
     @app.post("/procedures")
     async def post_procedure(body: dict[str, Any]):
-        """Any harness (QM swarm, cloud routine) reports an admitted Memorable draft: {kind?, draft, origin}."""
+        """Any harness (QM swarm, Builder) reports an admitted Memorable draft: {kind?, draft, origin}."""
         draft = body.get("draft") or {}
         if not draft.get("title"):
             raise HTTPException(422, "draft.title required")
