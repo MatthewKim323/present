@@ -88,7 +88,7 @@ export function drawAgentActivity(m, t = performance.now()) {
   const { c, ctx } = panel(w, h);
   glass(ctx, w, h);
   text(ctx, 'WORLDHOOK', 16, 22, { size: 9.5, weight: 600, color: 'rgba(232,236,240,0.45)', track: 1.4 });
-  text(ctx, m.hook || '', 92, 22, { size: 11, font: MONO, color: 'rgba(232,236,240,0.75)', max: w - 106 });
+  text(ctx, m.hook || '', 100, 22, { size: 11, font: MONO, color: 'rgba(232,236,240,0.75)', max: w - 114 });
   let y = 46;
   for (const wk of workers) {
     const st = wk.state || 'running';

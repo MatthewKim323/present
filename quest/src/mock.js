@@ -1,6 +1,10 @@
 // Scripted demo sequence (?mock=1). Exercises all three HUD states with no server.
+// Perception re-sends the track every frame; fake that at 1 Hz with a slight sway.
+const TRACKS = Array.from({ length: 17 }, (_, i) => [i * 1000,
+  { kind: 'track', track_id: 3, bbox: [0.38 + 0.02 * Math.sin(i / 2), 0.18, 0.22, 0.62], label: 'UNKNOWN PERSON 03' }]);
+
 export const DEMO_SCRIPT = [
-  [0, { kind: 'track', track_id: 3, bbox: [0.38, 0.18, 0.22, 0.62], label: 'UNKNOWN PERSON 03' }],
+  ...TRACKS,
   [800, { kind: 'person_card', anchor_track_id: 3, person_id: 'alex', name: 'ALEX', subtitle: 'founder · Acme',
     last: 'Syla onboarding', owes_you: 'feedback', you_owe: 'demo' }],
   [4000, { kind: 'memory_event', text: 'CUSTOMER FEEDBACK REMEMBERED', detail: 'Canvas onboarding' }],
@@ -17,11 +21,11 @@ export const DEMO_SCRIPT = [
     { name: 'Context', state: 'done', note: 'Alex · Acme · Syla pilot' },
     { name: 'Product', state: 'done', note: 'issue drafted: OAuth onboarding' },
     { name: 'Follow-up', state: 'done', note: 'reply ready, awaiting approval' } ] }],
-];
+].sort((a, b) => a[0] - b[0]);
 
 export function runMock(apply, { loop = true } = {}) {
   const timers = [];
-  const total = DEMO_SCRIPT[DEMO_SCRIPT.length - 1][0] + 6000;
+  const total = DEMO_SCRIPT[DEMO_SCRIPT.length - 1][0] + 2000;
   const once = () => {
     apply({ kind: 'clear' });
     for (const [t, msg] of DEMO_SCRIPT) timers.push(setTimeout(() => apply(msg), t));

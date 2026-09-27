@@ -100,6 +100,7 @@ export class DesktopHud {
       if (p) { x = p.x; y = p.y + p.h + 8; }
       else { x = innerWidth - w - 24; y = freeY; freeY += h + 10; }
       ctx.drawImage(c, x, y, w, h);
+      this.hits.push({ track: id, x, y, w, h });
     }
 
     let ty = innerHeight - 56;

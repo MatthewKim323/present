@@ -12,6 +12,7 @@ const hud = new HudState();
 const isQuest = /OculusBrowser|Quest/i.test(navigator.userAgent);
 const source = config.source || (isQuest ? 'quest3s' : 'desktop-sim');
 
+let audioCtx = null;
 let grabber = null, mic = null, xr = null, desktop = null, camLabel = '';
 
 function log(s) {
@@ -78,7 +79,7 @@ async function startMic() {
   if (mic || !config.audio) return;
   try {
     const stream = await openMic();
-    mic = new MicStreamer({ stream, chunkMs: config.audioChunkMs, onChunk: (a) => link.send({ kind: 'audio', ...a }, { droppable: true }) });
+    mic = new MicStreamer({ ctx: audioCtx, stream, chunkMs: config.audioChunkMs, onChunk: (a) => link.send({ kind: 'audio', ...a }, { droppable: true }) });
     await mic.start();
     log(`mic: ${stream.getAudioTracks()[0].label}`);
   } catch (e) {
@@ -89,6 +90,8 @@ async function startMic() {
 
 // First getUserMedia unlocks labels, then pick the best world-facing camera.
 async function bootCapture() {
+  // Must happen synchronously in the click, before any await, or it stays suspended.
+  if (!audioCtx && config.audio) { audioCtx = new AudioContext(); audioCtx.resume().catch(() => {}); }
   try {
     await startCapture();
     const best = pickCamera(await listCameras(), config.camHint);
@@ -96,7 +99,7 @@ async function bootCapture() {
   } catch (e) {
     log(`camera failed: ${e.name} ${e.message}`);
   }
-  await startMic();
+  startMic(); // not awaited: never block the HUD on the mic
 }
 
 // ---- modes -----------------------------------------------------------------
@@ -109,8 +112,13 @@ $('btn-desktop').onclick = async () => {
   $('ui').onclick = (e) => { if (e.target === $('ui') || e.target.classList.contains('brand')) $('ui').classList.toggle('min'); };
 };
 
+// On Quest: tap "1. Camera + mic" first (accept the permission prompts), then
+// "2. Enter AR". requestSession needs a fresh user gesture, so we never await
+// permissions before it.
+$('btn-start').onclick = () => bootCapture();
+
 $('btn-ar').onclick = async () => {
-  if (!grabber) await bootCapture(); // camera must be opened from the user gesture, before XR
+  if (!grabber) bootCapture();
   try {
     desktop && desktop.stop();
     xr = new XrHud({ hud, config, onPinch: pinch, statusLine });

@@ -46,7 +46,7 @@ wss.on('connection', (ws, req) => {
 });
 
 function playScript(ws) {
-  const total = DEMO_SCRIPT[DEMO_SCRIPT.length - 1][0] + 6000;
+  const total = DEMO_SCRIPT[DEMO_SCRIPT.length - 1][0] + 2000;
   const run = () => {
     if (ws.readyState !== 1) return;
     ws.send(JSON.stringify({ kind: 'clear' }));

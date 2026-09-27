@@ -147,43 +147,11 @@ function blobToB64(blob) {
 
 // ---- audio: mic -> 16 kHz mono PCM16 chunks ---------------------------------
 
-const WORKLET = `
-class Pcm16 extends AudioWorkletProcessor {
-  constructor(opts) {
-    super();
-    this.ratio = sampleRate / 16000;
-    this.chunk = Math.round(16000 * opts.processorOptions.chunkMs / 1000);
-    this.buf = new Int16Array(this.chunk);
-    this.n = 0;
-    this.acc = 0; this.accN = 0; this.pos = 0;
-  }
-  process(inputs) {
-    const ch = inputs[0] && inputs[0][0];
-    if (!ch) return true;
-    for (let i = 0; i < ch.length; i++) {
-      // box-filter decimation to 16 kHz
-      this.acc += ch[i]; this.accN++; this.pos += 1;
-      if (this.pos >= this.ratio) {
-        this.pos -= this.ratio;
-        const v = Math.max(-1, Math.min(1, this.acc / this.accN));
-        this.acc = 0; this.accN = 0;
-        this.buf[this.n++] = v < 0 ? v * 0x8000 : v * 0x7fff;
-        if (this.n === this.chunk) {
-          this.port.postMessage(this.buf.buffer, [this.buf.buffer]);
-          this.buf = new Int16Array(this.chunk);
-          this.n = 0;
-        }
-      }
-    }
-    return true;
-  }
-}
-registerProcessor('pcm16', Pcm16);
-`;
 
 export class MicStreamer {
-  constructor({ stream, chunkMs, onChunk }) {
+  constructor({ stream, chunkMs, onChunk, ctx }) {
     this.stream = stream;
+    this.ctx = ctx; // pass one created inside the click handler (autoplay policy)
     this.chunkMs = chunkMs;
     this.onChunk = onChunk;
     this.chunks = 0;
@@ -191,21 +159,25 @@ export class MicStreamer {
   }
 
   async start() {
-    this.ctx = new AudioContext();
-    const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
-    await this.ctx.audioWorklet.addModule(url);
+    this.ctx = this.ctx || new AudioContext();
     const src = this.ctx.createMediaStreamSource(this.stream);
-    this.node = new AudioWorkletNode(this.ctx, 'pcm16', { processorOptions: { chunkMs: this.chunkMs } });
-    this.node.port.onmessage = (e) => {
-      const pcm = new Int16Array(e.data);
+    const emit = (buf) => {
+      const pcm = new Int16Array(buf);
       let peak = 0;
       for (let i = 0; i < pcm.length; i += 16) peak = Math.max(peak, Math.abs(pcm[i]));
       this.level = peak / 32768;
       this.chunks++;
-      this.onChunk({ ts: Date.now() / 1000, pcm16_b64: bytesToB64(new Uint8Array(e.data)), sample_rate: 16000 });
+      this.onChunk({ ts: Date.now() / 1000, pcm16_b64: bytesToB64(new Uint8Array(buf)), sample_rate: 16000 });
     };
+    try {
+      await withTimeout(this.ctx.audioWorklet.addModule('/pcm16-worklet.js'), 3000);
+      this.node = new AudioWorkletNode(this.ctx, 'pcm16', { processorOptions: { chunkMs: this.chunkMs } });
+      this.node.port.onmessage = (e) => emit(e.data);
+    } catch {
+      this.node = scriptProcessorFallback(this.ctx, this.chunkMs, emit);
+    }
     src.connect(this.node);
-    // Worklet must be pulled by the graph; route through a muted gain.
+    // Node must be pulled by the graph; route through a muted gain.
     const mute = this.ctx.createGain();
     mute.gain.value = 0;
     this.node.connect(mute).connect(this.ctx.destination);
@@ -219,4 +191,28 @@ function bytesToB64(bytes) {
   let s = '';
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
   return btoa(s);
+}
+
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
+// Deprecated but universally available; used only if the worklet fails to load.
+function scriptProcessorFallback(ctx, chunkMs, emit) {
+  const node = ctx.createScriptProcessor(4096, 1, 1);
+  const ratio = ctx.sampleRate / 16000;
+  const chunk = Math.round((16000 * chunkMs) / 1000);
+  let buf = new Int16Array(chunk), n = 0, pos = 0, acc = 0, accN = 0;
+  node.onaudioprocess = (e) => {
+    const ch = e.inputBuffer.getChannelData(0);
+    for (let i = 0; i < ch.length; i++) {
+      acc += ch[i]; accN++; pos += 1;
+      if (pos >= ratio) {
+        pos -= ratio;
+        const v = Math.max(-1, Math.min(1, acc / accN));
+        acc = 0; accN = 0;
+        buf[n++] = v < 0 ? v * 0x8000 : v * 0x7fff;
+        if (n === chunk) { emit(buf.buffer); buf = new Int16Array(chunk); n = 0; }
+      }
+    }
+  };
+  return node;
 }
