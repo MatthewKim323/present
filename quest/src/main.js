@@ -5,6 +5,7 @@ import { DesktopHud } from './desktop.js';
 import { XrHud } from './xr.js';
 import { runMock } from './mock.js';
 import { setDevSender } from './devpanels.js';
+import { mountDesktopOverlays, mountDiag } from './perf.js';
 import { listCameras, pickCamera, openCamera, openMic, FrameGrabber, MicStreamer } from './capture.js';
 
 const $ = (id) => document.getElementById(id);
@@ -14,7 +15,7 @@ const isQuest = /OculusBrowser|Quest/i.test(navigator.userAgent);
 const source = config.source || (isQuest ? 'quest3s' : 'desktop-sim');
 
 let audioCtx = null;
-let grabber = null, mic = null, xr = null, desktop = null, camLabel = '';
+let grabber = null, mic = null, xr = null, lastXr = null, desktop = null, camLabel = '';
 
 function log(s) {
   const el = $('log');
@@ -23,8 +24,14 @@ function log(s) {
 
 const link = new Link(config.wsUrl, {
   onMessage: (m) => hud.apply(m),
-  onStatus: (s) => log(`ws ${s} ${config.wsUrl}`),
+  onStatus: (s) => { if (s !== 'connecting') log(`ws ${s} ${config.wsUrl}`); },
 });
+hud.net = link.net; // OFFLINE chip (perf.js) in both renderers
+mountDesktopOverlays(hud); // ?perf=1 numbers + OFFLINE chip on the 2D page
+if (config.diag) mountDiag({ link, xrInfo: () => (xr || lastXr)?.info() });
+// No devtools inside the headset: surface uncaught errors in the panel log.
+addEventListener('error', (e) => log(`error: ${e.message} (${String(e.filename || '').split('/').pop()}:${e.lineno})`));
+addEventListener('unhandledrejection', (e) => log(`unhandled: ${e.reason?.message || e.reason}`));
 setDevSender((m) => { link.send(m); log(`-> ${JSON.stringify(m)}`); });
 if (config.mock) runMock((m) => hud.apply(m));
 
@@ -125,7 +132,7 @@ $('btn-ar').onclick = async () => {
   try {
     desktop && desktop.stop();
     xr = new XrHud({ hud, config, onPinch: pinch, statusLine });
-    xr.onEnd = () => { log('xr ended'); xr = null; };
+    xr.onEnd = () => { log('xr ended'); lastXr = xr; xr = null; if (desktop) desktop.start(); };
     await xr.start();
     log('xr started');
   } catch (e) {

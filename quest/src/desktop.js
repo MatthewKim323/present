@@ -5,6 +5,7 @@ import { DesktopVision } from './visionfx.js';
 import { DesktopSwarm } from './swarmviz.js';
 import { DesktopBrain } from './brainpanel.js';
 import { DesktopMemory } from './memorypanel.js';
+import { ANIM_HZ, due, safe, frameBegin, frameEnd } from './perf.js';
 
 export class DesktopHud {
   constructor({ canvas, video, hud, onPinch }) {
@@ -40,8 +41,16 @@ export class DesktopHud {
   }
 
   start() {
+    if (this.running) return;
     this.running = true;
-    const loop = () => { if (!this.running) return; this.draw(); requestAnimationFrame(loop); };
+    // schedule first, then draw: an exception in one frame must not stop the loop
+    const loop = () => {
+      if (!this.running) return;
+      requestAnimationFrame(loop);
+      const t0 = frameBegin();
+      safe('desktop draw', () => this.draw());
+      frameEnd(t0);
+    };
     requestAnimationFrame(loop);
   }
 
@@ -55,12 +64,13 @@ export class DesktopHud {
     return { x: (innerWidth - w) / 2, y: (innerHeight - h) / 2, w, h };
   }
 
-  _raster(k, msg, fn) {
+  // animate: re-raster even when msg is unchanged, capped at ANIM_HZ
+  _raster(k, msg, fn, animate = false) {
     const c = this.cache.get(k);
-    if (c && c.msg === msg) return c.canvas;
+    if (c && c.msg === msg && (!animate || !due(c, ANIM_HZ))) return c.canvas;
     const canvas = fn(msg);
     if (this.cache.size > 64) this.cache.clear();
-    this.cache.set(k, { msg, canvas });
+    this.cache.set(k, { msg, canvas, _drawT: performance.now() });
     return canvas;
   }
 
@@ -86,7 +96,7 @@ export class DesktopHud {
 
     let freeY = 80;
     for (const [id, msg] of hud.cards) {
-      const c = deltasAnimating(msg) ? drawPersonCard(msg) : this._raster('card:' + id, msg, drawPersonCard);
+      const c = this._raster('card:' + id, msg, drawPersonCard, deltasAnimating(msg));
       const w = c.width / 2, h = c.height / 2;
       const b = hud.bboxFor(id);
       let x, y;
@@ -104,7 +114,7 @@ export class DesktopHud {
 
     for (const [id, msg] of hud.activity) {
       // Re-raster while any worker is running so the dots pulse.
-      const c = anyRunning(msg) ? drawAgentActivity(msg) : this._raster('act:' + id, msg, drawAgentActivity);
+      const c = this._raster('act:' + id, msg, drawAgentActivity, anyRunning(msg));
       const w = c.width / 2, h = c.height / 2;
       const p = placed.get(id);
       let x, y;
@@ -114,11 +124,11 @@ export class DesktopHud {
       this.hits.push({ track: id, x, y, w, h });
     }
 
-    this.swarm.draw(ctx, vr);
-    this.dev.draw(ctx, placed, vr);
-    this.brain.draw(ctx, placed, vr);
-    this.mem.draw(ctx);
-    this.vfx.draw(ctx, placed, vr, this.hits);
+    safe('desktop swarm', () => this.swarm.draw(ctx, vr));
+    safe('desktop dev', () => this.dev.draw(ctx, placed, vr));
+    safe('desktop brain', () => this.brain.draw(ctx, placed, vr));
+    safe('desktop memory', () => this.mem.draw(ctx));
+    safe('desktop vision', () => this.vfx.draw(ctx, placed, vr, this.hits));
 
     let ty = innerHeight - 56;
     for (const t of hud.liveToasts().reverse()) {

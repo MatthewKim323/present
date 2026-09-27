@@ -11,6 +11,7 @@
 // renderers: XrSwarm (three.js, one instanced sprite batch + ribbon edges + label
 // planes) and DesktopSwarm (2D canvas projection). Hooks elsewhere are one-liners.
 import * as THREE from 'three';
+import { LITE } from './perf.js'; // ?lite=1: no edge particles, no comet / satellite trails
 
 const FONT = 'ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif';
 const MONO = 'ui-monospace, Menlo, monospace';
@@ -592,7 +593,7 @@ export class SwarmSim {
       e.flow += ((flowing ? 1 : 0) - e.flow) * 0.08;
       e.k = k;
       e.alpha = alpha;
-      if (flowing && t >= e.nextEmit && t >= e.bornAt + e.dur && s.particles.length < MAX_PARTICLES) {
+      if (!LITE && flowing && t >= e.nextEmit && t >= e.bornAt + e.dur && s.particles.length < MAX_PARTICLES) {
         s.particles.push({ e, t0: t, dur: 0.75 + 0.25 * Math.random(), k: e.b === 'gbrain' || e.b === 'memorable' ? K.white : K.accent });
         e.nextEmit = t + 0.16 + 0.1 * Math.random();
       }
@@ -656,7 +657,7 @@ export class SwarmSim {
         f.srcVer = s.srcVer;
       }
       const u = easeInOut((t - f.t0) / f.dur);
-      for (let i = 7; i >= 0; i--) {
+      for (let i = LITE ? 0 : 7; i >= 0; i--) {
         const uu = u - i * 0.022;
         if (uu < 0) continue;
         samplePts(f.pts, uu, tmp);
@@ -681,7 +682,7 @@ export class SwarmSim {
       const [bx, by, bz] = b.pos;
       for (const q of s.sats) {
         const u = (t - q.t0) / q.dur, fade = u < 0.15 ? u / 0.15 : u > 0.6 ? (1 - u) / 0.4 : 1;
-        for (let i = 4; i >= 0; i--) {
+        for (let i = LITE ? 0 : 4; i >= 0; i--) {
           const ang = q.ph + (u - i * 0.018) * Math.PI * 3.2, r = 0.05 + 0.012 * u;
           this.emit(bx + Math.cos(ang) * r, by + Math.sin(ang) * r * q.tilt, bz + Math.sin(ang) * r * 0.8, q.k, fade * (i ? 0.5 * (1 - i / 5) : 1), i ? 0.009 : 0.014, i ? 0 : 1);
         }

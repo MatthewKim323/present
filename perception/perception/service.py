@@ -216,6 +216,9 @@ class WorldService:
                 await self.hub.broadcast(await self.hud.person_card(self.vision._encounter_event(t)))
         elif kind == "dev_action":
             await self.devfeed.handle_action(msg)
+        elif kind == "ping":  # Quest link keepalive + RTT (?diag=1); echo the client's clock back
+            if ws is not None:
+                await ws.send_text(json.dumps({"kind": "pong", "t": msg.get("t")}))
         else:
             log.debug("ignoring message kind %r", kind)
 

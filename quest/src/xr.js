@@ -10,8 +10,38 @@ import { XrVision } from './visionfx.js';
 import { XrSwarm } from './swarmviz.js';
 import { XrBrain } from './brainpanel.js';
 import { XrMemory } from './memorypanel.js';
+import { ANIM_HZ, due, safe, frameBegin, frameEnd, perfLine, drawPerf, drawOffline, offlineText } from './perf.js';
 
 const M_PER_PX = 0.0012; // panel css px -> meters (300px card ~ 0.36 m)
+
+// One renderer (one WebGL context) for the page's lifetime. A new one per AR entry leaked a context each
+// time; browsers cap live contexts (~16) and Quest Browser loses the oldest, so re-entering AR would die.
+let sharedRenderer = null;
+function getRenderer(config) {
+  if (sharedRenderer) return sharedRenderer;
+  const renderer = new THREE.WebGLRenderer({ antialias: !config.lite, alpha: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(devicePixelRatio);
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 0);
+  renderer.xr.enabled = true;
+  renderer.xr.setReferenceSpaceType('local');
+  if (config.lite) renderer.xr.setFramebufferScaleFactor(0.85); // fewer pixels per eye; must be set before setSession
+  return (sharedRenderer = renderer);
+}
+
+// Free every GPU resource under obj (geometry, material, textures) and detach it.
+export function disposeTree(obj) {
+  obj.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const m of mats) {
+      for (const v of Object.values(m)) if (v && v.isTexture) v.dispose();
+      if (m.uniforms) for (const u of Object.values(m.uniforms)) if (u.value && u.value.isTexture) u.value.dispose();
+      m.dispose();
+    }
+  });
+  obj.clear();
+}
 
 export class XrHud {
   constructor({ hud, config, onPinch, statusLine }) {
@@ -22,6 +52,7 @@ export class XrHud {
     this.headPose = [0, 0, 0, 0, 0, 0, 1];
     this.meshes = new Map(); // key -> { mesh, msg, canvas, target }
     this.session = null;
+    this._v = new THREE.Vector3(); // scratch
   }
 
   static async supported() {
@@ -29,22 +60,23 @@ export class XrHud {
   }
 
   async start() {
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(devicePixelRatio);
-    renderer.setSize(innerWidth, innerHeight);
-    renderer.setClearColor(0x000000, 0);
-    renderer.xr.enabled = true;
-    renderer.xr.setReferenceSpaceType('local');
+    const renderer = getRenderer(this.config);
     this.renderer = renderer;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 50);
 
-    const session = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['local'],
-      optionalFeatures: ['hand-tracking', 'local-floor'],
-    });
+    // Quest Browser: 'local' is always granted for immersive sessions; hand-tracking gives pinch as `select`
+    // without controllers; dom-overlay is optional (not in Quest Browser today, harmless to ask).
+    const init = { requiredFeatures: ['local'], optionalFeatures: ['local-floor', 'hand-tracking', 'dom-overlay'] };
+    let domRoot = document.getElementById('xr-dom');
+    if (!domRoot) { domRoot = document.createElement('div'); domRoot.id = 'xr-dom'; document.body.appendChild(domRoot); }
+    init.domOverlay = { root: domRoot };
+    const session = await navigator.xr.requestSession('immersive-ar', init);
     this.session = session;
     await renderer.xr.setSession(session);
+    if (this.config.hz && session.updateTargetFrameRate && [...(session.supportedFrameRates || [])].includes(this.config.hz)) {
+      session.updateTargetFrameRate(this.config.hz).catch(() => {});
+    }
     this.refSpace = renderer.xr.getReferenceSpace();
     this.dev = new XrDev(this.scene, session, this.hud); // GitHub + Claude Code panels
     this.vfx = new XrVision(this.scene, this.hud); // perception overlay on the face (visionfx.js)
@@ -54,7 +86,13 @@ export class XrHud {
 
     // Hand pinch (and controller trigger) arrive as `select`.
     session.addEventListener('select', (ev) => this._onSelect(ev));
-    session.addEventListener('end', () => { renderer.setAnimationLoop(null); this.session = null; this.onEnd && this.onEnd(); });
+    session.addEventListener('end', () => {
+      renderer.setAnimationLoop(null);
+      this.session = null;
+      // free everything this session built (cards, face planes, swarm graph, dev panels); the renderer stays
+      safe('xr dispose', () => { disposeTree(this.scene); this.meshes.clear(); renderer.renderLists.dispose(); });
+      this.onEnd && this.onEnd();
+    });
 
     this.raycaster = new THREE.Raycaster();
     renderer.setAnimationLoop((t, frame) => this._frame(t, frame));
@@ -62,17 +100,37 @@ export class XrHud {
 
   end() { this.session && this.session.end(); }
 
+  // What the session actually got, for ?diag=1.
+  info() {
+    const s = this.session;
+    if (!s) return this._info || null;
+    return (this._info = {
+      features: [...(s.enabledFeatures || ['(enabledFeatures n/a)'])],
+      frameRate: s.frameRate != null ? Math.round(s.frameRate) : null,
+      rates: [...(s.supportedFrameRates || [])],
+      blend: s.environmentBlendMode || '?',
+      fbScale: this.config.lite ? 0.85 : 1,
+    });
+  }
+
+  // Never let one bad frame (or one bad layer) end the loop: three.js stops scheduling frames if this throws.
   _frame(t, frame) {
+    const t0 = frameBegin();
+    safe('xr frame', () => this._frameInner(t, frame));
+    safe('xr render', () => this.renderer.render(this.scene, this.camera));
+    frameEnd(t0, this.renderer);
+  }
+
+  _frameInner(t, frame) {
     const pose = frame && frame.getViewerPose(this.refSpace);
     if (pose) {
       const p = pose.transform.position, o = pose.transform.orientation;
       this.headPose = [p.x, p.y, p.z, o.x, o.y, o.z, o.w];
     }
-    // Head from the viewer pose directly (the three xr camera updates inside render()).
-    const hm = pose ? new THREE.Matrix4().fromArray(pose.transform.matrix) : this.renderer.xr.getCamera().matrixWorld;
-    const head = new THREE.Vector3().setFromMatrixPosition(hm);
-    const headQ = new THREE.Quaternion().setFromRotationMatrix(hm);
-    this._head = head; this._headQ = headQ;
+    // Head from the viewer pose directly (the three xr camera updates inside render()). Reused objects: no per-frame garbage.
+    const hm = pose ? (this._hm ||= new THREE.Matrix4()).fromArray(pose.transform.matrix) : this.renderer.xr.getCamera().matrixWorld;
+    const head = (this._head ||= new THREE.Vector3()).setFromMatrixPosition(hm);
+    const headQ = (this._headQ ||= new THREE.Quaternion()).setFromRotationMatrix(hm);
     const seen = new Set();
     const hud = this.hud;
     let freeIdx = 0;
@@ -87,7 +145,7 @@ export class XrHud {
         // right of the person's head
         m.target = this._rayPoint(head, headQ, b[0] + b[2] + 0.02, b[1] + 0.12 * b[3], this.config.cardDistance);
         // the ray hits the face's right edge; shift by half the card so it sits beside the face, not over it
-        m.target.add(new THREE.Vector3(m.mesh.geometry.parameters.width / 2, 0, 0).applyQuaternion(headQ));
+        m.target.add(this._v.set(m.mesh.geometry.parameters.width / 2, 0, 0).applyQuaternion(headQ));
       } else if (!m.placed) {
         m.target = this._local(head, headQ, 0.32, 0.05 - 0.22 * freeIdx++, -this.config.cardDistance);
       }
@@ -102,7 +160,7 @@ export class XrHud {
       const card = this.meshes.get('card:' + id);
       if (card && card.target) {
         const ch = card.mesh.geometry.parameters.height, ah = m.mesh.geometry.parameters.height;
-        m.target = card.target.clone().add(new THREE.Vector3(0, -(ch / 2 + ah / 2 + 0.02), 0));
+        m.target = (m.target && m.target !== card.target ? m.target.copy(card.target) : card.target.clone()).add(this._v.set(0, -(ch / 2 + ah / 2 + 0.02), 0));
       } else if (!m.placed) {
         m.target = this._local(head, headQ, 0.32, -0.12 - 0.22 * freeIdx++, -this.config.cardDistance);
       }
@@ -115,17 +173,36 @@ export class XrHud {
       const k = 'toast:' + tst.t;
       seen.add(k);
       const m = this._mesh(k, tst, drawMemoryToast);
-      m.headLocked = new THREE.Vector3(0, y, -1.2);
+      (m.headLocked ||= new THREE.Vector3()).set(0, y, -1.2);
       m.mesh.material.opacity = tst.age < 0.08 ? tst.age / 0.08 : tst.age > 0.85 ? (1 - tst.age) / 0.15 : 1;
       y += m.mesh.geometry.parameters.height + 0.015;
     }
 
-    // status strip (tiny, bottom) so cam/mic/ws can be checked inside the headset
-    const line = this.statusLine();
+    // status strip (tiny, bottom) so cam/mic/ws can be checked inside the headset. Text refreshed at 2 Hz.
+    const now = performance.now();
+    if (due(this, 2, now, '_statusT')) this._statusLine = this.statusLine();
     seen.add('status');
-    const sm = this._mesh('status', line, drawStatus);
-    sm.headLocked = new THREE.Vector3(0, -0.42, -1.2);
+    const sm = this._mesh('status', this._statusLine, drawStatus);
+    (sm.headLocked ||= new THREE.Vector3()).set(0, -0.42, -1.2);
     sm.mesh.material.opacity = 0.7;
+
+    // OFFLINE chip (world service unreachable), just above the status strip. Subtle, not an alarm.
+    const off = offlineText(hud.net, now);
+    if (off) {
+      seen.add('offline');
+      const om = this._mesh('offline', off, drawOffline);
+      (om.headLocked ||= new THREE.Vector3()).set(0, -0.385, -1.2);
+      om.mesh.material.opacity = 0.85;
+    }
+
+    // ?perf=1: fps / frame ms / draw calls / textures, head-locked top-left, 2 Hz
+    if (this.config.perf) {
+      if (due(this, 2, now, '_perfT')) this._perfLine = perfLine();
+      seen.add('perf');
+      const pm = this._mesh('perf', this._perfLine || '', drawPerf);
+      (pm.headLocked ||= new THREE.Vector3()).set(-0.2, 0.26, -1.2);
+      pm.mesh.material.opacity = 0.8;
+    }
 
     // place + face the viewer
     for (const [k, m] of this.meshes) {
@@ -144,12 +221,11 @@ export class XrHud {
         m.mesh.lookAt(head); // Object3D.lookAt points +z at the target: plane front faces the viewer
       }
     }
-    this.dev.frame(head, headQ, this.meshes, this.config.cardDistance);
-    this.mem.frame(head, headQ, this.dev);
-    this.vfx.frame(this, head, headQ);
-    this.swarm.frame(head, headQ);
-    this.brain.frame(head, headQ, this.meshes, this.dev);
-    this.renderer.render(this.scene, this.camera);
+    safe('xr dev', () => this.dev.frame(head, headQ, this.meshes, this.config.cardDistance));
+    safe('xr memory', () => this.mem.frame(head, headQ, this.dev));
+    safe('xr vision', () => this.vfx.frame(this, head, headQ));
+    safe('xr swarm', () => this.swarm.frame(head, headQ));
+    safe('xr brain', () => this.brain.frame(head, headQ, this.meshes, this.dev));
   }
 
   // Normalized camera-frame coords -> world point at `dist` along the ray.
@@ -168,9 +244,11 @@ export class XrHud {
     return new THREE.Vector3(x, y, z).applyQuaternion(headQ).add(head);
   }
 
+  // animate: redraw even when msg is unchanged, capped at ANIM_HZ (each redraw is a texture upload).
   _mesh(k, msg, draw, animate = false) {
     let m = this.meshes.get(k);
-    if (m && m.msg === msg && !animate) return m;
+    if (m && m.msg === msg && (!animate || !due(m, ANIM_HZ))) return m;
+    if (m && animate) m._drawT = performance.now();
     const canvas = draw(msg);
     const w = (canvas.width / 2) * M_PER_PX, h = (canvas.height / 2) * M_PER_PX;
     if (m && Math.abs(m.mesh.geometry.parameters.width - w) < 1e-6 && Math.abs(m.mesh.geometry.parameters.height - h) < 1e-6) {

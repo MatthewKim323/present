@@ -21,6 +21,7 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (req.url === '/health') return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, mock: true, gbrain: 'mock', enrolled: 0 }));
   res.writeHead(200).end('mock world service\n');
 });
 
@@ -38,6 +39,7 @@ wss.on('connection', (ws, req) => {
     stats.bytes += data.length;
     let m;
     try { m = JSON.parse(data); } catch { return; }
+    if (m.kind === 'ping') { ws.send(JSON.stringify({ kind: 'pong', t: m.t })); return; }
     if (m.kind in stats) stats[m.kind]++;
     if (m.kind === 'frame') stats.lastFrame = `${m.w}x${m.h} pose=${JSON.stringify((m.head_pose || []).map((v) => +v.toFixed(2)))}`;
     if (m.kind === 'gesture' || m.kind === 'label') console.log('[mock] <-', JSON.stringify(m));

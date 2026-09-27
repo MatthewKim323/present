@@ -149,6 +149,27 @@ if (CYCLES > 0) {
   const r = await rinfo();
   out.after_cycles = { cycles: CYCLES, gl_contexts_created: await ev('__bench.ctx'), live_textures: r?.textures, live_geometries: r?.geometries, js_heap_MB: +(m2.JSHeapUsedSize / 1e6).toFixed(1) };
 }
+// --fuzz: feed malformed / unknown / oversized messages straight into HudState while in AR, then check the
+// XR loop is still producing frames (a throw inside the animation callback would freeze the headset HUD).
+if (args.fuzz) {
+  const count = () => ev('__bench.frames.length');
+  await ev('(__bench.frames = [], __bench.on = true)');
+  const res = await ev(`(() => {
+    const hud = window.__xrSwarm.hud, big = 'A'.repeat(7e6);
+    const bad = [null, 42, 'str', [], {}, { kind: 'nope_unknown' }, { kind: 'vision', tracks: [{ track_id: 1 }, null, { track_id: 2, bbox: 'x' }] },
+      { kind: 'vision', tracks: 'x' }, { kind: 'tracks', tracks: [null, { track_id: 5, bbox: [NaN, 1] }] }, { kind: 'person_card', anchor_track_id: 9, bbox: 'nope' },
+      { kind: 'person_card' }, { kind: 'agent_activity', workers: 'x' }, { kind: 'qm_swarm', workers: [null, {}] }, { kind: 'qm_swarm', hook: 'h', workers: 7 },
+      { kind: 'dev_github', prs: [{}] }, { kind: 'dev_github', prs: 'x' }, { kind: 'context_delta' }, { kind: 'relationship_vector', dims: 'x' },
+      { kind: 'face_capture', track_id: 1, jpeg_b64: big }, { kind: 'preview_shot', jpeg_b64: big }, { kind: 'preview_shot', jpeg_b64: 5 },
+      { kind: 'memory_event', text: { a: 1 } }, { kind: 'gbrain_op' }, { kind: 'procedure', phase: 'recalled' }, { type: 'person.encountered', payload: {} }];
+    let threw = 0;
+    for (const m of bad) { try { hud.apply(m); } catch { threw++; } }
+    return { sent: bad.length, threw };
+  })()`);
+  await sleep(3000);
+  out.fuzz = { ...res, frames_after_3s: await count() };
+  await ev('__bench.on = false');
+}
 out.errors = [...new Set(logs)].slice(0, 8);
 console.log(JSON.stringify(out, null, 2));
 ws.close();
