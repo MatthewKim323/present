@@ -115,16 +115,16 @@ def test_partner_change_closes_encounter():
 
 
 def test_parse_feature_request():
-    data = {"summary": "s", "project": "Syla", "events": [
-        ev(type="feature_request.detected", product="Syla", feature="Add onboarding progress checklist",
-           request="Show a checklist at the top of onboarding", requested_by="Matthew",
-           acceptance=["Checklist with 4 steps", " ", "Progress bar"]),
+    data = {"summary": "s", "project": "Opal", "events": [
+        ev(type="feature_request.detected", product="Opal", feature="Add How it works section under hero",
+           request="Show three steps under the hero", requested_by="Matthew",
+           acceptance=["Section below the hero", " ", "Three numbered steps"]),
         ev(type="feature_request.detected"),  # empty -> dropped
     ]}
     out = parse_extraction(data, alex_enc())
     fr = [e for e in out if e["type"] == "feature_request.detected"]
     assert len(fr) == 1
-    assert fr[0]["payload"] == {"product": "Syla", "feature": "Add onboarding progress checklist",
-                                "request": "Show a checklist at the top of onboarding", "requested_by": "Matthew",
-                                "acceptance": ["Checklist with 4 steps", "Progress bar"]}
-    assert fr[0]["project"] == "syla"
+    assert fr[0]["payload"] == {"product": "Opal", "feature": "Add How it works section under hero",
+                                "request": "Show three steps under the hero", "requested_by": "Matthew",
+                                "acceptance": ["Section below the hero", "Three numbered steps"]}
+    assert fr[0]["project"] == "opal"

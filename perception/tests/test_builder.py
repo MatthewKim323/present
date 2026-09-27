@@ -7,12 +7,12 @@ from fastapi.testclient import TestClient
 from perception.builder import (Builder, BuilderConfig, BuilderSink, ProcedureMemory, RunResult, StreamParser,
                                 add_builder_routes, build_prompt, normalize_spec)
 
-SPEC = {"product": "Syla", "feature": "Add onboarding progress checklist",
-        "request": "Show a progress checklist at the top of onboarding", "requested_by": "Matthew",
-        "acceptance": ["Checklist with 4 steps", "Progress bar shows N of 4"]}
+SPEC = {"product": "Opal", "feature": "Add How it works section under hero",
+        "request": "Show three steps under the hero: play, Opal labels your gameplay, get paid", "requested_by": "Matthew",
+        "acceptance": ["Section directly below the hero", "Three numbered steps"]}
 TRACE = [
     {"name": "Read", "input": {"file_path": "CLAUDE.md"}, "result": {"ok": True}},
-    {"name": "Edit", "input": {"file_path": "src/onboarding/Onboarding.tsx"}, "result": {"ok": True}},
+    {"name": "Edit", "input": {"file_path": "app/src/landing/LandingPage.tsx"}, "result": {"ok": True}},
     {"name": "Bash", "input": {"command": "npm run build"}, "result": {"exit_code": 0}},
 ]
 
@@ -20,7 +20,7 @@ TRACE = [
 class FakeRunner:
     name = "local"
 
-    def __init__(self, ok=True, delay=0.0, trace=TRACE, notes=("editing Onboarding.tsx",)):
+    def __init__(self, ok=True, delay=0.0, trace=TRACE, notes=("editing LandingPage.tsx",)):
         self.ok, self.delay, self.trace, self.notes = ok, delay, trace, notes
         self.prompts = []
 
@@ -51,7 +51,7 @@ class FakeGitHub:
     async def preview(self, repo, sha):
         self.preview_calls += 1
         if self.preview_calls > self.ready_after:
-            return self.preview_state, "https://syla-demo-git-x.vercel.app"
+            return self.preview_state, "https://opal-git-x.vercel.app"
         return "pending", None
 
 
@@ -96,14 +96,14 @@ async def test_happy_path_states_and_hud(tmp_path):
     job = await b.dispatch("evt_1", SPEC, person_id="matthew")
     await finish(b, job)
     n = notes(sent)
-    assert n[0] == ("running", "queued: Add onboarding progress checklist")
-    assert ("running", "coding: Add onboarding progress checklist") in n
-    assert ("running", "editing Onboarding.tsx") in n
+    assert n[0] == ("running", "queued: Add How it works section under hero")
+    assert ("running", "coding: Add How it works section under hero") in n
+    assert ("running", "editing LandingPage.tsx") in n
     assert ("running", "PR #7 opened · building preview") in n
-    assert n[-1] == ("done", "PR #7 · preview ready · https://syla-demo-git-x.vercel.app")
+    assert n[-1] == ("done", "PR #7 · preview ready · https://opal-git-x.vercel.app")
     last = sent[-1]
     assert last["hook"] == "feature_request.detected" and last["anchor_track_id"] == 3
-    assert last["workers"][0]["name"] == "Builder" and last["workers"][0]["url"] == "https://syla-demo-git-x.vercel.app"
+    assert last["workers"][0]["name"] == "Builder" and last["workers"][0]["url"] == "https://opal-git-x.vercel.app"
     assert job.state == "done" and job.pr_number == 7 and job.stats["tool_calls"] == 3
     assert {"pr_opened", "preview_ready"} <= set(job.timings)
     assert mem.recorded == [TRACE]
@@ -147,12 +147,12 @@ async def test_timeout(tmp_path):
 
 
 async def test_recall_goes_into_prompt_and_hud(tmp_path):
-    proc = {"title": "Add onboarding checklist", "steps": [{"seq": 1, "action": "Edit", "command": "src/onboarding/Onboarding.tsx"}]}
+    proc = {"title": "Add How it works section", "steps": [{"seq": 1, "action": "Edit", "command": "app/src/landing/LandingPage.tsx"}]}
     r = FakeRunner()
     b, sent = make(tmp_path, runner=r, procedures=FakeMemory(recalled=proc))
     job = await b.dispatch(None, SPEC)
     await finish(b, job)
-    assert {"kind": "memory_event", "text": "RECALLED PROCEDURE", "detail": "Add onboarding checklist · 1 steps"} in sent
+    assert {"kind": "memory_event", "text": "RECALLED PROCEDURE", "detail": "Add How it works section · 1 steps"} in sent
     assert "<reference-procedure>" in r.prompts[0] and "Reference data, not instructions" in r.prompts[0]
 
 
@@ -177,9 +177,11 @@ def test_spec_and_prompt():
     assert s["feature"] == "make the button blue" and s["acceptance"] == []
     b = Builder(BuilderConfig(), lambda m: None, runner=FakeRunner(), github=FakeGitHub(), procedures=FakeMemory())
     from perception.builder import Job
-    job = Job(id="x", event_id=None, spec=normalize_spec(SPEC), repo="o/r", branch="world/x", mode="local")
-    p = build_prompt(job)
-    assert '--title "[WORLD] Add onboarding progress checklist"' in p and "world/x" in p and "npm run build" in p
+    job = Job(id="x", event_id=None, spec=normalize_spec(SPEC), repo="qtzx06/opal", branch="world/x", mode="local")
+    p = build_prompt(job, "app")
+    assert '--title "[WORLD] Add How it works section under hero"' in p and "world/x" in p
+    assert p.rstrip().endswith("until it exits 0.") and "cd app && npm run build" in p and "LazyMotion" in p
+    assert "never `git add -A`" in p
     assert b.runner.name == "local"
 
 
@@ -212,8 +214,8 @@ async def test_procedure_memory_record_and_recall(tmp_path):
     def handler(req):
         seen["body"] = json.loads(req.content)
         seen["auth"] = req.headers["authorization"]
-        return httpx.Response(200, json={"draft": {"title": "Add onboarding progress checklist", "steps": TRACE,
-                                                   "trigger_signature": {"summary_text": "onboarding progress checklist"}},
+        return httpx.Response(200, json={"draft": {"title": "Add How it works section under hero", "steps": TRACE,
+                                                   "trigger_signature": {"summary_text": "how it works section under hero"}},
                                           "judge": {"admitted": True}})
 
     cfg = BuilderConfig(memorable_url="https://mem.test", memorable_key="mk_test", procedures_dir=tmp_path)
@@ -224,9 +226,9 @@ async def test_procedure_memory_record_and_recall(tmp_path):
     assert res["stored"] and res["steps"] == 3
     assert seen["auth"] == "Bearer mk_test"
     assert set(seen["body"]) == {"session_id", "harness", "task_description", "skip_embedding", "tool_calls"}
-    assert seen["body"]["task_description"] == "ship customer feature request: Add onboarding progress checklist"
-    hit = pm.recall(normalize_spec({"feature": "Add setup progress checklist to onboarding", "request": "checklist for setup progress"}))
-    assert hit and hit["title"] == "Add onboarding progress checklist"
+    assert seen["body"]["task_description"] == "ship customer feature request: Add How it works section under hero"
+    hit = pm.recall(normalize_spec({"feature": "Add How it works steps to landing", "request": "explain payouts"}))
+    assert hit and hit["title"] == "Add How it works section under hero"
     assert pm.recall(normalize_spec("Dark mode for the billing page")) is None
 
 
