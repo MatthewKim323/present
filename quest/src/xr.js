@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { drawMemoryToast, drawAgentActivity, drawStatus, anyRunning } from './panels.js';
 import { drawPersonCardPlus as drawPersonCard, deltasAnimating, XrDev } from './devpanels.js';
 import { XrVision } from './visionfx.js';
+import { XrSwarm } from './swarmviz.js';
 
 const M_PER_PX = 0.0012; // panel css px -> meters (300px card ~ 0.36 m)
 
@@ -45,6 +46,7 @@ export class XrHud {
     this.refSpace = renderer.xr.getReferenceSpace();
     this.dev = new XrDev(this.scene, session, this.hud); // GitHub + Claude Code panels
     this.vfx = new XrVision(this.scene, this.hud); // perception overlay on the face (visionfx.js)
+    this.swarm = new XrSwarm(this.scene, this); // spatial QM swarm graph
 
     // Hand pinch (and controller trigger) arrive as `select`.
     session.addEventListener('select', (ev) => this._onSelect(ev));
@@ -140,6 +142,7 @@ export class XrHud {
     }
     this.dev.frame(head, headQ, this.meshes, this.config.cardDistance);
     this.vfx.frame(this, head, headQ);
+    this.swarm.frame(head, headQ);
     this.renderer.render(this.scene, this.camera);
   }
 
