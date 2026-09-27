@@ -1,0 +1,159 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Camera glass GPU check</title>
+    <style>
+      body {
+        margin: 0;
+        background: #111;
+        color: #eee;
+        font: 16px system-ui;
+      }
+      main {
+        padding: 20px;
+      }
+      canvas {
+        display: block;
+        max-width: 100%;
+      }
+      p {
+        max-width: 750px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>camera glass · GPU check</h1>
+      <p>
+        synthetic camera image — verifies shader compilation, projected
+        distortion and visible pointer geometry without camera permissions.
+      </p>
+      <output id="result">running</output>
+      <div id="view"></div>
+    </main>
+    <script type="module">
+      import * as THREE from "three";
+      import {
+        createCameraGlassMaterial,
+        updateCameraGlassMaterial,
+      } from "../src/components/camera-glass-material.js";
+      import {
+        createSpecularMaterial,
+        updateSpecularMaterial,
+      } from "../src/components/specular-material.js";
+      import { XrPointers } from "../src/xr-pointers.js";
+      try {
+        const renderer = new THREE.WebGLRenderer({
+          antialias: false,
+          preserveDrawingBuffer: true,
+        });
+        renderer.setSize(900, 600);
+        document.querySelector("#view").append(renderer.domElement);
+        const image = document.createElement("canvas");
+        image.width = 900;
+        image.height = 600;
+        const ctx = image.getContext("2d");
+        ctx.fillStyle = "#777";
+        ctx.fillRect(0, 0, 900, 600);
+        for (let x = 0; x < 900; x += 60) {
+          ctx.fillStyle = x % 120 ? "#ddd" : "#333";
+          ctx.fillRect(x, 0, 30, 600);
+        }
+        for (let y = 0; y < 600; y += 60) {
+          ctx.fillStyle = "#999";
+          ctx.fillRect(0, y, 900, 3);
+        }
+        ctx.fillStyle = "#fff";
+        ctx.font = "48px sans-serif";
+        ctx.fillText("CAMERA PIXELS", 250, 315);
+        const texture = new THREE.CanvasTexture(image);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(60, 1.5, 0.01, 10);
+        camera.updateMatrixWorld();
+        const bg = new THREE.Mesh(
+          new THREE.PlaneGeometry(3.4641, 2.3094),
+          new THREE.MeshBasicMaterial({ map: texture }),
+        );
+        bg.position.z = -2;
+        scene.add(bg);
+        const material = createCameraGlassMaterial(400, 280);
+        const panel = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.8, 0.56),
+          material,
+        );
+        panel.position.z = -1;
+        panel.renderOrder = 5;
+        scene.add(panel);
+        const args = {
+          texture,
+          projectionMatrix: camera.projectionMatrix,
+          viewMatrix: camera.matrixWorldInverse,
+        };
+        const gl = renderer.getContext();
+        function pixels() {
+          const bytes = new Uint8Array(900 * 600 * 4);
+          gl.readPixels(0, 0, 900, 600, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+          return bytes;
+        }
+        updateCameraGlassMaterial(material, { ...args, strength: 0 });
+        renderer.render(scene, camera);
+        const before = pixels();
+        updateCameraGlassMaterial(material, { ...args, strength: 0.055 });
+        renderer.render(scene, camera);
+        const after = pixels();
+        // Center must remain exactly the compositor/background pixels.
+        for (let y = 260; y < 340; y++)
+          for (let x = 410; x < 490; x++) {
+            const i = (y * 900 + x) * 4;
+            if (Math.abs(before[i] - after[i]) > 1)
+              throw new Error("Glass shifted center pixels");
+          }
+        let changed = 0;
+        for (let i = 0; i < before.length; i += 4)
+          if (Math.abs(before[i] - after[i]) > 8) changed++;
+        if (changed < 100)
+          throw new Error(
+            "No meaningful camera distortion: " + changed + " changed pixels",
+          );
+        // Test the visible material with NO camera refraction source.
+        panel.material = createSpecularMaterial(400, 280);
+        material.dispose();
+        updateSpecularMaterial(panel.material, { lightAngle: 0.3 });
+        renderer.render(scene, camera);
+        const lightA = pixels();
+        updateSpecularMaterial(panel.material, { lightAngle: 2.3 });
+        renderer.render(scene, camera);
+        const lightB = pixels();
+        let highlights = 0;
+        for (let i = 0; i < lightA.length; i += 4)
+          if (Math.abs(lightA[i] - lightB[i]) > 8) highlights++;
+        if (highlights < 500)
+          throw new Error("Glass lighting is too faint: " + highlights);
+        const pointers = new XrPointers(scene);
+        pointers.begin();
+        pointers.update(
+          {},
+          new THREE.Vector3(-0.55, -0.32, -0.25),
+          new THREE.Vector3(0.5, 0.28, -0.75).normalize(),
+          { distance: 0.75 },
+          new THREE.Quaternion(),
+          true,
+        );
+        pointers.end();
+        renderer.render(scene, camera);
+        document.querySelector("#result").textContent =
+          "PASS — " +
+          changed +
+          " edge pixels refracted; center unchanged; " +
+          highlights +
+          " reflection pixels respond without camera access";
+      } catch (e) {
+        document.querySelector("#result").textContent = "FAIL — " + e.message;
+        console.error(e);
+      }
+    </script>
+  </body>
+</html>

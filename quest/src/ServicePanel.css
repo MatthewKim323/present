@@ -1,0 +1,55 @@
+.service-panel { position:fixed; z-index:130; inset:18px 18px 18px auto; width:min(490px,calc(100vw - 36px)); color:rgba(255,255,255,.9); background:rgba(20,21,23,.91); border:1px solid rgba(255,255,255,.19); border-radius:24px; box-shadow:0 24px 90px #0006,inset 0 1px 0 #ffffff25; backdrop-filter:blur(30px); display:flex; flex-direction:column; font:13px/1.5 Inter,system-ui,sans-serif; pointer-events:auto; }
+.service-panel * { box-sizing:border-box; }
+.service-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:24px 24px 16px; }
+.service-heading span { font-size:10px; letter-spacing:.16em; color:#aaa; }
+.service-panel h2 { margin:7px 0 0; font-size:23px; font-weight:450; letter-spacing:-.04em; }
+.service-panel h3 { font-size:14px; font-weight:500; margin:0 0 12px; }
+.service-panel h4 { margin:18px 0 7px; font-weight:500; font-size:12px; }
+.service-panel p { margin:8px 0 14px; overflow-wrap:anywhere; }
+.service-panel button,.service-panel input,.service-panel textarea,.service-panel select { font:inherit; color:inherit; background:#ffffff08; border:1px solid #ffffff24; border-radius:9px; padding:8px 11px; }
+.service-panel button { cursor:pointer; white-space:normal; }
+.service-panel button:hover { background:#ffffff15; border-color:#ffffff55; }
+.service-panel button:disabled { opacity:.4; cursor:wait; }
+.service-panel :focus-visible { outline:2px solid #eee; outline-offset:3px; }
+.service-tabs { display:flex; gap:5px; padding:0 24px 18px; border-bottom:1px solid #ffffff14; }
+.service-tabs button { flex:1; font-size:12px; border-color:transparent; padding:7px; }
+.service-tabs button[aria-pressed=true] { background:#ffffff14; border-color:#ffffff22; }
+.service-content { padding:8px 24px 24px; overflow:auto; overscroll-behavior:contain; min-height:0; }
+.service-block { padding:19px 0; border-bottom:1px solid #ffffff14; }
+.service-block-heading { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:16px; }
+.service-block-heading h3 { margin:0; }
+.service-block-heading button { font-size:11px; padding:5px 9px; }
+.service-hint,.service-panel small { color:#aaa; font-size:11px; }
+.service-fields { display:grid; grid-template-columns: minmax(90px,1fr) minmax(0,1.6fr); gap:6px 14px; margin:12px 0; font-size:12px; }
+.service-fields dt { color:#999; }
+.service-fields dd { margin:0; overflow-wrap:anywhere; text-align:right; }
+.service-list { list-style:none; margin:0; padding:0; }
+.service-list li { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:11px 0; border-top:1px solid #ffffff0c; }
+.service-list li>div { min-width:0; }
+.service-list strong { font-weight:500; overflow-wrap:anywhere; }
+.service-list small { display:block; overflow-wrap:anywhere; margin-top:3px; }
+.service-list span { font-size:11px; color:#aaa; flex-shrink:0; }
+.service-panel .service-job { width:100%; text-align:left; padding:12px; }
+.service-job[aria-pressed=true] { border-color:#ffffff66; }
+.service-panel label { display:flex; flex-direction:column; gap:6px; font-size:11px; color:#bbb; margin:12px 0; }
+.service-panel input,.service-panel textarea,.service-panel select { width:100%; font-size:13px; color:#eee; }
+.service-panel select option { background:#222; color:#eee; }
+.service-panel textarea { resize:vertical; min-height:80px; }
+.service-panel .service-code { font:11px/1.65 ui-monospace,SFMono-Regular,monospace; tab-size:2; }
+.service-raw { margin:12px 0; }
+.service-panel summary { cursor:pointer; color:#bbb; font-size:12px; }
+.service-panel pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:280px; overflow:auto; font:10px/1.65 ui-monospace,SFMono-Regular,monospace; background:#0003; padding:12px; border-radius:9px; }
+.service-links { display:flex; flex-wrap:wrap; gap:14px; margin:12px 0; }
+.service-links a { color:#eee; text-underline-offset:4px; font-size:12px; }
+.service-inline { display:flex; align-items:end; gap:12px; }
+.service-inline label { flex:1; min-width:0; margin:8px 0; }
+.service-inline button { margin-bottom:8px; }
+.service-error { border-left:2px solid #ddd; padding-left:10px; }
+.service-result { padding:18px 0 2px; overflow-wrap:anywhere; }
+@media(max-width:540px) { .service-panel { inset:8px; width:auto; border-radius:18px; }.service-heading { padding:20px 18px 16px; }.service-content { padding-inline:18px; }.service-tabs { padding-inline:18px; } }
+.service-run { width:100%; min-width:0; }
+.service-run > small { display:block; margin-top:4px; }
+.service-panel .service-checkbox { flex-direction:row; align-items:center; }
+.service-panel .service-checkbox input { width:auto; }
+
+.service-list .service-focused-record { border-left:2px solid #ddd; padding-left:12px; background:#ffffff05; }

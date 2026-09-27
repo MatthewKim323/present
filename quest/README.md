@@ -2,7 +2,7 @@
 
 WebXR `immersive-ar` page (three.js + Vite) served from the laptop. It streams
 camera frames + mic audio to the world service over `/ws/quest` and renders the
-three HUD states from `CLAUDE.md` in passthrough. Same page runs in a desktop
+person context, memory, agent activity and 24 tool-driven panel types in passthrough. Same page runs in a desktop
 browser over the webcam, so the HUD can be built without the headset.
 
 ## Decision
@@ -46,7 +46,9 @@ src/link.js           /ws/quest client, auto-reconnect, drops frames on backpres
 src/capture.js        camera pick + JPEG frame grabber, mic -> 16 kHz PCM16 chunks
 public/pcm16-worklet.js  AudioWorklet (ScriptProcessor fallback in capture.js)
 src/hud.js            HUD state (cards, toasts, activity, track bboxes)
-src/panels.js         canvas rasterizer for the 3 panels (shared by both renderers)
+src/panels.js         canvas rasterizer for native XR panels
+src/PanelLibrary.jsx  interactive 24-type library and browser glass cards
+src/components/       adapted React Bits source and native specular shader
 src/desktop.js        desktop renderer over the webcam
 src/xr.js             immersive-ar renderer, pinch -> gesture
 src/mock.js           scripted demo HUD sequence (?mock=1)
@@ -83,12 +85,13 @@ npm run dev                         # https://localhost:5173, proxies /ws -> loc
 npm run mock                        # listens on :8787, replays the demo HUD script
 ```
 
-Open https://localhost:5173 (accept the self-signed cert), click **Desktop**.
-`?mock=1` plays the demo HUD sequence client-side with no server at all.
+Open https://localhost:5173 (accept the self-signed cert), click **step inside** for preview, or use setup to start camera + mic.
+`?mock=1` plays the fictional encounter client-side without capture or a server.
+`?studio=1` opens the 24-type glass panel library. See [interface and agent contract](../docs/INTERFACE.md) for source provenance, tool calls and rendering limitations.
 Click a card or a person box = pinch.
 `?emulate=1` installs Meta's IWER (emulated Quest 3 WebXR runtime) so **2. Enter AR**
 works on the laptop: exercises the XR renderer, anchoring and status strip
-(verified: panels render, frames keep streaming at 5 fps during the XR session).
+(physical headset validation is still required for the new glass material).
 
 Useful params: `?fps=5&w=640&q=0.7` (frame rate, width, jpeg quality),
 `?hfov=80&dist=1.6` (XR anchoring), `?cam=left` (prefer a camera label),
@@ -119,10 +122,10 @@ npm run adb:reverse          # headset localhost:5173 and :8787 -> laptop
 
 In Quest Browser open **http://localhost:5173**, then:
 
-1. Tap **1. Camera + mic**. Allow camera and microphone. The panel shows the
+1. Open settings and tap **start camera + mic**. Allow camera and microphone. The panel shows the
    camera label and `cam 5.0fps`. If the list has several cameras, pick the
    passthrough one (not "front"/avatar) in the dropdown.
-2. Tap **2. Enter AR**. You should see passthrough plus a small status strip at
+2. Tap **enter AR**. You should see passthrough plus a small status strip at
    the bottom (`cam .. fps · mic live · ws open`). Pinch = select.
 
 If Quest Browser refuses the camera, check Settings > Privacy & safety > App
@@ -141,6 +144,20 @@ often isolates; use the cable or a phone hotspot).
 `scrcpy --crop 1832:1920:0:0 --max-fps 30` mirrors the left eye to the laptop
 (crop numbers vary by device, drop `--crop` to see both eyes).
 
+## Camera glass and hand pointers
+
+Exit AR and reload after changes. AR preserves Quest's full surrounding
+passthrough. Native panels use the original React Bits bar geometry with a
+nearly clear surface and subtle edge reflections. Quest composites the room
+after WebGL, so sampling a second camera for glass would create a shifted copy.
+The React Bits FluidGlass transmission shader remains available for rendered
+scenes and GPU fixtures, but real-room optical refraction is not available
+through Quest Browser's WebXR passthrough.
+
+Entering AR does not start the camera. In live mode, tap **start camera + mic**
+before **enter AR** to feed perception; in studio/mock mode, AR needs no camera.
+Hand/controller beams work independently of camera capture.
+
 ## Known gaps / verify on device
 
 - Whether `getUserMedia` returns the passthrough camera on this 3S build, and
@@ -150,3 +167,10 @@ often isolates; use the cable or a phone hotspot).
   the card sits beside the person. No depth, fixed distance (`?dist=`).
 - Pinch relies on Quest hand tracking emitting `select`; controllers' trigger
   also works.
+
+## Backend service drawer
+
+Open **service** in the header for health, enrolled people, build history/detail,
+agent panel commands and action receipts. Diagnostic inputs remain collapsed.
+All mutations require an explicit click; starting a build launches real work.
+The project MCP adapter and complete route map are in `../docs/FRONTEND-API.md`.

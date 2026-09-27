@@ -35,8 +35,17 @@ export function applyDev(hud, msg) {
   hud.deltas ||= new Map(); // person_id -> [{ text, kind, t }]
   switch (msg.kind) {
     case 'dev_github':
-      hud.devGithub = msg;
+      if (!Array.isArray(msg.prs)) return false;
+      hud.devGithub = { ...msg, _selectedPr: hud.devGithub?._selectedPr };
+      if (!msg.prs?.some((p) => p.number === hud.devGithub._selectedPr)) hud.devGithub._selectedPr = msg.prs?.[0]?.number;
       return true;
+    case 'agent_activity':
+      hud.devWorkerLinks = (Array.isArray(msg.workers) ? msg.workers : []).filter(w => w && typeof w === 'object').flatMap((w) => [
+        w.url && { label: `${w.name} preview`, url: w.url },
+        w.pr_url && { label: `${w.name} PR`, url: w.pr_url },
+        w.session_url && { label: `${w.name} session`, url: w.session_url },
+      ].filter(Boolean)).slice(0, 6);
+      return false; // retain the normal agent activity card
     case 'dev_session':
       hud.devSession = { ...msg, _rx: performance.now() };
       return true;
@@ -60,7 +69,7 @@ export function applyDev(hud, msg) {
       if (hud.previewClosed !== `${msg.job_id}:${msg.pr}`) hud.previewShot = acceptShot(hud.previewShot, msg);
       return true;
     case 'clear':
-      hud.devGithub = null; hud.devSession = null; hud.previewShot = null; hud.previewClosed = null; hud.deltas.clear();
+      hud.devGithub = null; hud.devSession = null; hud.devWorkerLinks = []; hud.previewShot = null; hud.previewClosed = null; hud.deltas.clear();
       return false; // let hud.js clear its own state too
     default:
       return false;
@@ -169,12 +178,12 @@ const GH_W = 340;
 // Returns a canvas with `.hits = [{ action, pr, url, x, y, w, h }]` in panel css px.
 export function drawGithubPanel(m) {
   const prs = m?.prs || [];
-  const top = prs[0];
-  const rest = prs.slice(1, 4);
+  const top = prs.find((p) => p.number === m._selectedPr) || prs[0];
+  const rest = prs.filter((p) => p !== top);
   const hunk = top?.hunk || [];
   let h = 34;
   if (!top) h += 22;
-  else h += 20 + 18 + 18 + 18 + (hunk.length ? 22 + hunk.length * 14 + 8 : 0) + 38 + rest.length * 18 + 4;
+  else h += 20 + 18 + 18 + 18 + (hunk.length ? 22 + hunk.length * 14 + 8 : 0) + 38 + rest.length * 24 + 4;
   const { c, ctx } = panel(GH_W, h);
   c.hits = [];
   glass(ctx, 0, 0, GH_W, h);
@@ -192,6 +201,7 @@ export function drawGithubPanel(m) {
   text(ctx, top.title.replace(/^\[WORLD\]\s*/, ''), 30 + nw + 8, y, { size: 12.5, weight: 600, max: GH_W - 60 - nw - 50 });
   text(ctx, top.state === 'draft' ? 'DRAFT' : (top.checks === 'none' ? '' : top.checks.toUpperCase()), GH_W - 16, y,
     { size: 8.5, weight: 600, color: ck, track: 1.2, align: 'right' });
+  if (safeLink(top.url)) c.hits.push({ action: 'open_link', url: top.url, x: 16, y: y - 14, w: GH_W - 32, h: 18 });
   y += 18;
   text(ctx, top.branch, 30, y, { size: 10.5, font: MONO, color: DIM, max: 190 });
   const dw = text(ctx, `−${top.deletions}`, GH_W - 16, y, { size: 10.5, font: MONO, color: BAD, align: 'right' });
@@ -225,7 +235,7 @@ export function drawGithubPanel(m) {
     y += bh;
   }
 
-  // buttons (act on the newest PR)
+  // buttons act on the explicitly selected PR
   y += 10;
   const btns = [
     { action: 'approve', label: 'APPROVE', on: true, color: ACCENT },
@@ -251,7 +261,8 @@ export function drawGithubPanel(m) {
   y += 24 + 8;
 
   for (const p of rest) {
-    y += 16;
+    y += 22;
+    c.hits.push({ action: 'select_pr', pr: p.number, x: 12, y: y - 16, w: GH_W - 24, h: 24 });
     const col = { pass: ACCENT, fail: BAD, pending: WARN, none: DIM }[p.checks] || DIM;
     dot(ctx, 20, y - 4, 2.5, col);
     const w2 = text(ctx, `#${p.number}`, 30, y, { size: 10.5, font: MONO, color: MID });
@@ -277,6 +288,7 @@ export function drawSessionPanel(m, t = performance.now()) {
   const proc = m.procedure;
   let h = 34 + 20 + 18 + (proc ? 18 : 0) + (tail.length ? 12 + tail.length * 14 : 0) + 24;
   const { c, ctx } = panel(CC_W, h);
+  c.hits = [];
   glass(ctx, 0, 0, CC_W, h);
   const st = m.state || 'running';
   const live = ['queued', 'running', 'pr_open'].includes(st);
@@ -312,17 +324,56 @@ export function drawSessionPanel(m, t = performance.now()) {
   y += 20;
   const foot = m.session_url ? host(m.session_url) : `${m.mode || 'local'} · claude -p${m.pr ? ` · PR #${m.pr}` : ''}`;
   text(ctx, m.session_url ? 'SESSION' : 'RUNNER', 16, y, { size: 9, weight: 600, color: DIM, track: 1.2 });
+  if (safeLink(m.session_url)) c.hits.push({ action: 'open_link', url: m.session_url, x: 12, y: y - 14, w: CC_W - 24, h: 22 });
   text(ctx, foot, 72, y, { size: 10.5, font: MONO, color: m.session_url ? ACCENT : DIM, max: CC_W - 88 });
+  return c;
+}
+
+export function drawWorkerLinks(links) {
+  const rows = links.filter((l) => safeLink(l.url)).slice(0, 6);
+  const { c, ctx } = panel(CC_W, 34 + rows.length * 28);
+  c.hits = [];
+  glass(ctx, 0, 0, CC_W, c.height / S);
+  text(ctx, 'WORKER OUTPUTS', 16, 22, { size: 9.5, color: DIM, track: 1.4 });
+  rows.forEach((link, i) => {
+    const y = 34 + i * 28;
+    text(ctx, link.label, 16, y + 17, { size: 11, color: MID, max: CC_W - 48 });
+    text(ctx, '↗', CC_W - 24, y + 17, { size: 12 });
+    c.hits.push({ action: 'open_link', url: link.url, x: 12, y, w: CC_W - 24, h: 28 });
+  });
   return c;
 }
 
 // ---------------------------------------------------------------- actions
 
-function act(hud, hit) {
+export function safeLink(url) {
+  try { const u = new URL(url); return ['http:', 'https:'].includes(u.protocol) ? u.href : null; } catch { return null; }
+}
+
+export function act(hud, hit) {
   if (!hit) return false;
+  if (hit.action === 'select_pr') {
+    if (hud.devGithub?.prs?.some((p) => p.number === hit.pr)) {
+      hud.devGithub = { ...hud.devGithub, _selectedPr: hit.pr };
+      hud.version++;
+    }
+    return true;
+  }
+  if (hit.action === 'open_link') {
+    const url = safeLink(hit.url);
+    if (!url) return true;
+    if (hud.xrActive) {
+      hud.pendingPreview = url;
+      hud.apply({ kind: 'memory_event', text: 'LINK QUEUED', detail: 'opens when you exit AR' });
+    } else openPreview(url);
+    return true;
+  }
   const msg = { kind: 'dev_action', action: hit.action, pr: hit.pr };
   if (hit.action === 'comment' && hit.text) msg.text = hit.text;
-  sender(msg);
+  if (!sender(msg)) {
+    hud.apply({ kind: 'memory_event', text: 'ACTION NOT SENT', detail: 'Connect the live service to act on this PR.' });
+    return true;
+  }
   if (hit.action === 'open_preview' && hit.url) {
     if (hud.xrActive) {
       hud.pendingPreview = hit.url;
@@ -336,6 +387,8 @@ function act(hud, hit) {
 
 // Desktop / post-XR: preview in an overlay iframe, plus a plain link (Vercel previews may refuse framing).
 export function openPreview(url) {
+  url = safeLink(url);
+  if (!url) return;
   document.getElementById('dev-preview')?.remove();
   const wrap = document.createElement('div');
   wrap.id = 'dev-preview';
@@ -563,12 +616,12 @@ export class DesktopDev {
     ctx.translate(x + w / 2, y + h / 2); ctx.scale(k, k);
     ctx.drawImage(c, -w / 2, -h / 2, w, h);
     ctx.restore();
-    this.pv = { x, y, w, h, sc };
+    this.pv = { x: x + w * (1 - k) / 2, y: y + h * (1 - k) / 2, w: w * k, h: h * k, sc: sc * k };
   }
 
   _cockpit(ctx, placed, vr, gh, ss, t) {
     const hud = this.hud;
-    if (!gh && !ss) return;
+    if (!gh && !ss && !hud.devWorkerLinks?.length) return;
     if (gh && this.cache.gh !== gh) { this.cache.gh = gh; this.cache.ghCanvas = drawGithubPanel(gh); }
     if (ss && (this.cache.s !== ss || t - this.cache.sT > 120)) { this.cache.s = ss; this.cache.sT = t; this.cache.sCanvas = drawSessionPanel(ss, t); }
     const card = [...placed.values()][0];
@@ -589,7 +642,13 @@ export class DesktopDev {
         x = ghRect ? ghRect.x : leftX(w);
         y = ghRect ? ghRect.y + ghRect.h + 10 : y;
       }
-      put(c, x, y);
+      const rect = put(c, x, y);
+      for (const h of c.hits || []) this.hits.push({ ...h, x: rect.x + h.x, y: rect.y + h.y });
+    }
+    if (hud.devWorkerLinks?.length) {
+      const c = drawWorkerLinks(hud.devWorkerLinks);
+      const rect = put(c, 24, innerHeight - c.height / S - 24);
+      for (const h of c.hits) this.hits.push({ ...h, x: rect.x + h.x, y: rect.y + h.y });
     }
   }
 
@@ -626,9 +685,13 @@ export class XrDev {
     this.anchorPos = null;
     this.pv = null;   // preview shot mesh (world-locked once spawned)
     this.downT = 0;
+    this.presses = new Map();
     hud.xrActive = true;
     if (import.meta.env?.DEV) window.__xrDev = this; // headless checks drive pinches on the preview
-    session.addEventListener('selectstart', () => { this.downT = performance.now(); });
+    session.addEventListener('selectstart', (ev) => {
+      this.downT = performance.now();
+      this.presses.set(ev.inputSource, this.downT);
+    });
     session.addEventListener('end', () => {
       hud.xrActive = false;
       if (hud.pendingPreview) { openPreview(hud.pendingPreview); hud.pendingPreview = null; }
@@ -667,7 +730,12 @@ export class XrDev {
   }
 
   // head: Vector3, headQ: Quaternion, cardMeshes: xr.js meshes Map (to sit beside the person card).
-  frame(head, headQ, cardMeshes, dist = 1.6) {
+  frame(head, headQ, cardMeshes, dist = 1.6, hideCockpit = false) {
+    if (hideCockpit) {
+      for (const name of Object.keys(this.meshes)) this._drop(name);
+      this._preview(head, headQ, performance.now());
+      return;
+    }
     const hud = this.hud;
     const t = performance.now();
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQ);
@@ -692,10 +760,10 @@ export class XrDev {
       cy = center.y + 0.14;
     }
     const r = right(this.anchorYaw);
-    const place = (name, x) => {
+    const place = (name, x, drop = 0) => {
       const m = this.meshes[name];
       const target = center.clone().addScaledVector(r, x);
-      target.y = cy - m.h / 2;
+      target.y = cy - m.h / 2 - drop;
       if (!m.placed) { m.mesh.position.copy(target); m.placed = true; } else m.mesh.position.lerp(target, 0.12);
       m.mesh.lookAt(head);
     };
@@ -710,6 +778,10 @@ export class XrDev {
       const m = this._mesh('ss', `${s._rx}:${sec}`, () => drawSessionPanel(s, t));
       place('ss', card ? cardHalf + 0.06 + m.w / 2 : 0.04 + m.w / 2);
     } else this._drop('ss');
+    if (hud.devWorkerLinks?.length) {
+      const m = this._mesh('links', hud.devWorkerLinks, () => drawWorkerLinks(hud.devWorkerLinks));
+      place('links', 0, 0.48);
+    } else this._drop('links');
     this._preview(head, headQ, t);
   }
 
@@ -738,6 +810,8 @@ export class XrDev {
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(PV_W * PV_M_PER_PX, PV_H * PV_M_PER_PX), mat);
       mesh.renderOrder = 20; // over the cockpit + cards: it is closest
       mesh.userData.dev = 'preview';
+      mesh.userData.logicalWidth = PV_W;
+      mesh.userData.logicalHeight = PV_H;
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQ);
       fwd.y = 0;
       if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
@@ -760,19 +834,22 @@ export class XrDev {
   }
 
   // Pinch: raycaster already set from the input ray. Returns true if a dev button took it.
-  select(raycaster) {
+  select(raycaster, inputSource) {
+    const started = this.presses.get(inputSource);
+    const held = started == null ? 0 : performance.now() - started;
+    this.presses.delete(inputSource);
     const pv = this.pv, shot = this.hud.previewShot;
     if (pv && shot) {
       const hit = raycaster.intersectObject(pv.mesh, false)[0];
-      if (hit && hit.uv) return previewHit(this.hud, shot, hit.uv.x * PV_W, (1 - hit.uv.y) * PV_H, performance.now() - this.downT);
+      if (hit && hit.uv) return previewHit(this.hud, shot, hit.uv.x * PV_W, (1 - hit.uv.y) * PV_H, held);
     }
-    const gh = this.meshes.gh;
-    if (!gh) return false;
-    const hit = raycaster.intersectObject(gh.mesh, false)[0];
-    if (!hit || !hit.uv) return false;
-    const px = hit.uv.x * (gh.canvas.width / S), py = (1 - hit.uv.y) * (gh.canvas.height / S);
-    const b = (gh.canvas.hits || []).find((h) => px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h);
-    return b ? act(this.hud, b) : true; // swallow pinches on the panel body
+    const hits = raycaster.intersectObjects(Object.values(this.meshes).map((m) => m.mesh), false);
+    const hit = hits[0];
+    if (!hit?.uv) return false;
+    const panel = this.meshes[hit.object.userData.dev];
+    const px = hit.uv.x * (panel.canvas.width / S), py = (1 - hit.uv.y) * (panel.canvas.height / S);
+    const b = (panel.canvas.hits || []).find((h) => px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h);
+    return b ? act(this.hud, b) : true;
   }
 }
 

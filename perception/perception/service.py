@@ -18,7 +18,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from .audio import EnergyVAD, NullTranscriber, Transcriber, make_transcriber, pcm16_to_float, resample
@@ -29,6 +29,8 @@ from .extract import Extractor
 from .faces import FaceEngine, LatencyStat, decode_jpeg
 from .live import RollingExtractor
 from .people import PeopleStore
+from .panels import MANIFEST, PanelStore
+from .qm_routes import add_qm_routes
 from .sinks import FanOut, HudSink, QMSink, StubGBrainSink
 from .builder import Builder, BuilderConfig, BuilderSink, add_builder_routes
 from .devfeed import DevFeed
@@ -42,17 +44,36 @@ class Hub:
 
     def __init__(self) -> None:
         self.clients: set[WebSocket] = set()
+        self._state: dict[str, tuple[float, str]] = {}
+        self._lock = asyncio.Lock()
+
+    async def replay(self, ws: WebSocket) -> None:
+        """Restore bounded cockpit state, never replay actions or transient toasts."""
+        async with self._lock:
+            now = time.monotonic()
+            for key, (received, data) in list(self._state.items()):
+                if now - received > 1800:
+                    del self._state[key]
+                else:
+                    await ws.send_text(data)
 
     async def broadcast(self, msg: dict[str, Any]) -> None:
         data = json.dumps(msg)
-        dead = []
-        for ws in list(self.clients):
-            try:
-                await ws.send_text(data)
-            except Exception:  # noqa: BLE001
-                dead.append(ws)
-        for ws in dead:
-            self.clients.discard(ws)
+        async with self._lock:
+            kind = msg.get("kind")
+            if kind == "clear":
+                self._state.clear()
+            elif kind in {"dev_github", "dev_session", "preview_shot", "agent_activity"}:
+                # Latest snapshot of each cockpit view; preview JPEG count is bounded to one.
+                self._state[kind] = (time.monotonic(), data)
+            dead = []
+            for ws in list(self.clients):
+                try:
+                    await ws.send_text(data)
+                except Exception:  # noqa: BLE001
+                    dead.append(ws)
+            for ws in dead:
+                self.clients.discard(ws)
 
 
 class WorldService:
@@ -70,6 +91,7 @@ class WorldService:
             encounter_debounce_s=self.s.encounter_debounce_s, enroll_samples=self.s.enroll_samples,
         )
         self.hub = Hub()
+        self.panels = PanelStore(self.hub.broadcast)
         self.debug_clients: set[WebSocket] = set()
         self.gbrain = self._make_gbrain(StubGBrainSink(self.s.events_log_path, people_meta=self._people_meta))
         self.qm = QMSink(self.s.qm_url)
@@ -164,7 +186,21 @@ class WorldService:
 
     # inbound quest messages
     async def handle_quest_message(self, msg: dict[str, Any], ws: WebSocket | None = None) -> None:
+        if not isinstance(msg, dict):
+            return
         kind = msg.get("kind")
+        if kind == "panel_action":
+            await self.panels.select(msg)
+            return
+        if kind == "panel_dismiss":
+            try:
+                if set(msg) != {"kind", "panel_id"}:
+                    raise ValueError("invalid dismiss fields")
+                await self.panels.command({"op": "dismiss", "id": msg.get("panel_id")})
+            except ValueError:
+                if ws is not None:
+                    await ws.send_json({"kind": "panel_result", "panel_id": msg.get("panel_id"), "status": "rejected"})
+            return
         if kind == "frame":
             self.frames_in += 1
             self._latest_frame = (base64.b64decode(msg["jpeg_b64"]), float(msg.get("ts") or time.time()))
@@ -265,6 +301,7 @@ class WorldService:
         while True:
             await asyncio.sleep(0.5)
             try:
+                await self.panels.expire()
                 if self._latest_frame is None:
                     self.vision.tick()
                 for enc in self.conv.tick(time.time()):
@@ -326,6 +363,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     app = FastAPI(title="WORLD world service", lifespan=lifespan)
     app.state.svc = svc
     add_builder_routes(app, svc.builder)
+    add_qm_routes(app, svc.qm)
 
     @app.post("/procedures")
     async def post_procedure(body: dict[str, Any]):
@@ -341,7 +379,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
         await ws.accept()
         svc.source = ws.query_params.get("source", "quest3s")
         debug = ws.query_params.get("debug") in ("1", "true")
-        svc.hub.clients.add(ws)
+        await svc.panels.connect(ws, svc.hub.clients, replay=svc.hub.replay)
         if debug:
             svc.debug_clients.add(ws)
         log.info("quest connected (source=%s debug=%s)", svc.source, debug)
@@ -363,7 +401,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     @app.websocket("/ws/hud")
     async def ws_hud(ws: WebSocket):
         await ws.accept()
-        svc.hub.clients.add(ws)
+        await svc.panels.connect(ws, svc.hub.clients, replay=svc.hub.replay)
         try:
             while True:
                 await ws.receive_text()  # HUD clients may send pings; ignored
@@ -383,11 +421,33 @@ def create_app(service: WorldService | None = None) -> FastAPI:
 
     @app.post("/hud")
     async def post_hud(body: dict[str, Any]):
-        kinds = ("person_card", "memory_event", "agent_activity", "context_delta", "dev_github", "dev_session")
+        if body.get("kind") == "panel":
+            return await post_panel({k: v for k, v in body.items() if k != "kind"})
+        kinds = ("person_card", "memory_event", "agent_activity", "context_delta", "dev_github", "dev_session", "panel")
         if body.get("kind") not in kinds:
             raise HTTPException(422, "kind must be one of " + " | ".join(kinds))
         await svc.hub.broadcast(body)
         return {"ok": True}
+
+    @app.get("/tools")
+    async def tools():
+        return {"tools": [MANIFEST["tool"]]}
+
+    @app.post("/tools/world-panel")
+    async def post_panel(body: dict[str, Any]):
+        try:
+            panel = await svc.panels.command(body)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        return {"ok": True, "panel": panel}
+
+    @app.get("/panels")
+    async def panels():
+        return {"panels": await svc.panels.snapshot()}
+
+    @app.get("/panel-actions")
+    async def panel_actions(after: int = Query(default=0, ge=0)):
+        return svc.panels.read_actions(after)
 
     @app.get("/health")
     async def health():
