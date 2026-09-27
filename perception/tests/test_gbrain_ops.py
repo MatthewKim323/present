@@ -174,3 +174,15 @@ def test_proxy_on_stub_backend(tmp_path, monkeypatch):
         assert c.post("/gbrain/query", json={"q": "x"}, headers=AUTH).status_code == 503
         r = c.get("/gbrain/person/matthew", headers=AUTH)
         assert r.status_code == 200 and r.json()["backend"] == "stub"
+
+
+def test_read_only_proxy_token_is_accepted(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    from perception.gbrain_ops import check_bearer
+    monkeypatch.setenv("WORLD_HOOKS_SECRET", "w" * 32)
+    monkeypatch.setenv("GBRAIN_PROXY_TOKEN", "g" * 32)
+    check_bearer("Bearer " + "g" * 32)
+    check_bearer("Bearer " + "w" * 32)
+    with pytest.raises(HTTPException):
+        check_bearer("Bearer " + "x" * 32)
