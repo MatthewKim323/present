@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gbrain-io": {
+      "type": "http",
+      "url": "https://gbrain.io/mcp"
+    }
+  }
+}
