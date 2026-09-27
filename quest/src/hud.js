@@ -63,6 +63,7 @@ export class HudState {
         this.toasts = this.toasts.slice(-3);
         break;
       case 'agent_activity':
+        if (!Array.isArray(msg.workers)) msg = { ...msg, workers: [] }; // renderers iterate workers every frame
         if (msg.bbox) this._track(msg.anchor_track_id, msg.bbox);
         this.activity.set(key(msg.anchor_track_id), { ...msg, t: now() });
         break;
