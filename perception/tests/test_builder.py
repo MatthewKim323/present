@@ -183,7 +183,7 @@ def test_spec_and_prompt():
 
 
 def test_stream_parser_trace():
-    sp = StreamParser()
+    sp = StreamParser("/x")
     lines = [
         {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "/x/CLAUDE.md"}}]}},
         {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "secret file body"}]}},
@@ -198,8 +198,8 @@ def test_stream_parser_trace():
         notes_ += sp.feed(json.dumps(m))
     assert notes_ == ["reading CLAUDE.md", "editing a.tsx", "building"]
     assert sp.trace == [
-        {"name": "Read", "input": {"file_path": "/x/CLAUDE.md"}, "result": {"ok": True}},
-        {"name": "Edit", "input": {"file_path": "/x/a.tsx"}, "result": {"ok": True}},
+        {"name": "Read", "input": {"file_path": "CLAUDE.md"}, "result": {"ok": True}},
+        {"name": "Edit", "input": {"file_path": "a.tsx"}, "result": {"ok": True}},
         {"name": "Bash", "input": {"command": "npm run build"}, "result": {"exit_code": 2}},
     ]
     assert sp.result["num_turns"] == 5

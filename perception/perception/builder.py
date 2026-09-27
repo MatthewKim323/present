@@ -205,7 +205,8 @@ def build_prompt(job: Job) -> str:
         "3. Run `npm run build` and fix errors until it passes.",
         f"4. You are on branch `{b}`. Commit there with a one-line message (no Co-Authored-By or any AI attribution), then `git push -u origin {b}`.",
         f"5. `gh pr create --base main --head {b} --title \"{title}\" --body <body>`. Body: 2-3 line summary, the acceptance "
-        "checks as a markdown checklist, and 'Requested in person by <name>, captured by WORLD.' Never merge.",
+        "checks as a markdown checklist, and 'Requested in person by <name>, captured by WORLD.' No 'Generated with' "
+        "footer or other AI attribution. Never merge.",
         "6. As your very last action, run `npm run build` once more to verify the pushed branch builds.",
         "No exploration beyond what the change needs, no new dependencies, no tests to add, no refactors.",
     ]
@@ -223,7 +224,7 @@ Then:
 2. Implement the smallest change that satisfies every acceptance check. It must be visible on the screen the app opens on.
 3. Run `npm run build` and fix errors until it passes.
 4. Commit on a new claude/ branch with a one-line message (no AI attribution) and push it.
-5. Open a PR against main titled "[WORLD] <feature>" (use the feature line from the payload verbatim). Body: 2-3 line summary, acceptance checks as a markdown checklist, and "Requested in person by <requested_by>, captured by WORLD." Never merge.
+5. Open a PR against main titled "[WORLD] <feature>" (use the feature line from the payload verbatim). Body: 2-3 line summary, acceptance checks as a markdown checklist, and "Requested in person by <requested_by>, captured by WORLD." No "Generated with" footer or other AI attribution. Never merge.
 6. As your very last action run `npm run build` again to verify.
 No exploration beyond what the change needs, no new dependencies, no refactors."""
 
@@ -256,12 +257,14 @@ def _redact(s: str) -> str:
     return _SECRET.sub("<redacted>", s)[:300]
 
 
-def canonical_input(name: str, inp: dict[str, Any]) -> dict[str, Any]:
-    """Only command|file_path|path|pattern|url|query, never file contents."""
+def canonical_input(name: str, inp: dict[str, Any], root: str = "") -> dict[str, Any]:
+    """Only command|file_path|path|pattern|url|query, never file contents. Paths made relative to the clone."""
     out = {}
     for k in ("command", "file_path", "path", "pattern", "url", "query"):
         v = inp.get(k)
         if isinstance(v, str) and v:
+            if root:
+                v = v.replace(root.rstrip("/") + "/", "").replace(root.rstrip("/"), ".")
             out[k] = _redact(v)
     if name == "NotebookEdit" and "notebook_path" in inp:
         out["file_path"] = str(inp["notebook_path"])
@@ -291,7 +294,8 @@ def action_note(name: str, inp: dict[str, Any]) -> str | None:
 class StreamParser:
     """Parses `claude -p --output-format stream-json --verbose` lines into a canonical trace + stats."""
 
-    def __init__(self) -> None:
+    def __init__(self, root: str = "") -> None:
+        self.root = root
         self.pending: dict[str, dict[str, Any]] = {}
         self.trace: list[dict[str, Any]] = []
         self.result: dict[str, Any] = {}
@@ -311,7 +315,7 @@ class StreamParser:
                     name, inp = b.get("name", ""), b.get("input") or {}
                     canon = CANON.get(name)
                     if canon:
-                        call = {"name": canon, "input": canonical_input(name, inp), "result": {"ok": True}}
+                        call = {"name": canon, "input": canonical_input(name, inp, self.root), "result": {"ok": True}}
                         self.pending[b.get("id", "")] = call
                         self.trace.append(call)
                     n = action_note(name, inp)
@@ -380,12 +384,13 @@ class LocalClaudeRunner:
         await progress(f"coding: {job.feature}")
         args = [self.cfg.claude_bin, "-p", prompt, "--output-format", "stream-json", "--verbose",
                 "--model", self.cfg.model, "--allowedTools", "Bash,Read,Edit,Write,Glob,Grep",
-                "--no-session-persistence", "--strict-mcp-config"]
+                "--no-session-persistence", "--strict-mcp-config",
+                "--settings", json.dumps({"attribution": {"commit": "", "pr": ""}, "includeCoAuthoredBy": False})]
         if self.cfg.mcp_config:
             args += ["--mcp-config", self.cfg.mcp_config]
         proc = await asyncio.create_subprocess_exec(*args, cwd=d, env=self._env(), stdout=asyncio.subprocess.PIPE,
                                                     stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
-        parser = StreamParser()
+        parser = StreamParser(str(d.resolve()))
         assert proc.stdout is not None
         async for raw in proc.stdout:
             for n in parser.feed(raw.decode(errors="replace")):
@@ -692,6 +697,8 @@ class Builder:
                 result = await asyncio.wait_for(run_task, 120)
             except Exception:  # noqa: BLE001
                 result = None
+        if result:
+            job.stats.update({k: v for k, v in result.info.items() if k in ("tool_calls", "num_turns", "total_cost_usd", "duration_ms")})
         if result and result.trace:
             try:
                 job.procedure = await self.procedures.record(job, result.trace)
