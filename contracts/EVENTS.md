@@ -26,8 +26,8 @@ QM  --traces-->  Memorable  (native QM integration)
   "ts": "2026-09-27T20:14:03Z",
   "source": "quest3s",            // quest3s | desktop-sim | manual
   "confidence": 0.94,
-  "people": [{ "id": "alex", "name": "Alex", "enrolled": true }],
-  "project": "syla",              // nullable
+  "people": [{ "id": "matthew", "name": "Matthew", "enrolled": true }],
+  "project": "opal",              // nullable
   "payload": { }                  // type-specific, below
 }
 ```
@@ -53,12 +53,12 @@ QM  --traces-->  Memorable  (native QM integration)
 ## HUD messages (world service -> Quest, over /ws/hud and /ws/quest)
 
 ```json
-{ "kind": "person_card", "anchor_track_id": 3, "person_id": "alex",
-  "name": "ALEX", "subtitle": "founder · Acme", "last": "Syla onboarding",
+{ "kind": "person_card", "anchor_track_id": 3, "person_id": "matthew",
+  "name": "MATTHEW", "subtitle": "builder · Kali Labs", "last": "Opal landing",
   "owes_you": "feedback", "you_owe": "demo",
   "bbox": [x, y, w, h] }   // optional, normalized 0-1 in source frame, used for XR anchoring
 
-{ "kind": "memory_event", "text": "CUSTOMER FEEDBACK REMEMBERED", "detail": "Canvas onboarding" }
+{ "kind": "memory_event", "text": "CUSTOMER FEEDBACK REMEMBERED", "detail": "Opal landing page" }
 
 { "kind": "agent_activity", "anchor_track_id": 3, "hook": "customer_feedback.detected",
   "workers": [{ "name": "Context", "state": "running" | "done" | "failed", "note": "searching GBrain" }] }
@@ -76,12 +76,12 @@ QM swarm tracker (WorldHooks) posts to `POST :8787/hud`: `agent_activity` for ev
 `relationship: "early Opal user, wants easier setup"` (1-line summary),
 `recent_deltas: ["prefers async demos", ...]` (last 3 learned, newest first).
 
-Builder (feature_request.detected -> coding agent -> PR): same `agent_activity` shape, one worker named `Builder`, plus optional `job_id` on the message and `url` (Vercel preview) / `pr_url` on the worker once known. Notes go `queued: <feature>` -> `coding: <feature>` / `editing Onboarding.tsx` / `building` / `opening PR` -> `PR #N opened · building preview` -> done `PR #N · preview ready · <url>` (or failed `failed: <reason>`). Before coding, a recalled Memorable procedure shows as `{ "kind": "memory_event", "text": "RECALLED PROCEDURE", "detail": "<title> · <n> steps" }`.
+Builder (feature_request.detected -> coding agent -> PR): same `agent_activity` shape, one worker named `Builder`, plus optional `job_id` on the message and `url` (Vercel preview) / `pr_url` on the worker once known. Notes go `queued: <feature>` -> `coding: <feature>` / `editing LandingPage.tsx` / `building` / `opening PR` -> `PR #N opened · building preview` -> done `PR #N · preview ready · <url>` (or failed `failed: <reason>`). Before coding, a recalled Memorable procedure shows as `{ "kind": "memory_event", "text": "RECALLED PROCEDURE", "detail": "<title> · <n> steps" }`.
 
 ```json
 { "kind": "agent_activity", "anchor_track_id": 4, "hook": "feature_request.detected", "job_id": "b123451",
-  "workers": [{ "name": "Builder", "state": "done", "note": "PR #3 · preview ready · https://syla-demo-git-....vercel.app",
-                "url": "https://syla-demo-git-....vercel.app", "pr_url": "https://github.com/MatthewKim323/syla-demo/pull/3" }] }
+  "workers": [{ "name": "Builder", "state": "done", "note": "PR #3 · preview ready · https://opal-git-....vercel.app",
+                "url": "https://opal-git-....vercel.app", "pr_url": "https://github.com/qtzx06/opal/pull/3" }] }
 ```
 
 ### Dev cockpit (GitHub + Claude Code panels, `perception/devfeed.py`)
@@ -91,16 +91,16 @@ snapshots (replace, don't merge), sent on change and re-sent every ~10s so late 
 
 ```json
 { "kind": "dev_github", "repo": "qtzx06/opal",
-  "prs": [{ "number": 7, "title": "[WORLD] Add Slack onboarding", "branch": "world/add-slack-onboarding-b1234",
+  "prs": [{ "number": 7, "title": "[WORLD] Add How it works section under hero", "branch": "world/add-how-it-works-section-under-hero",
             "state": "open" | "draft", "checks": "pass" | "fail" | "pending" | "none",
-            "additions": 42, "deletions": 8, "files": ["app/src/Onboarding.tsx", "..."],
+            "additions": 42, "deletions": 8, "files": ["app/src/landing/LandingPage.tsx", "..."],
             "preview_url": "https://opal-git-....vercel.app" | null, "url": "https://github.com/qtzx06/opal/pull/7",
-            "hunk_file": "app/src/Onboarding.tsx",
+            "hunk_file": "app/src/landing/LandingPage.tsx",
             "hunk": [{ "t": "+" | "-" | " ", "s": "<one source line, <=90 chars>" }] }] }
 
-{ "kind": "dev_session", "job_id": "b123451", "feature": "Add Slack onboarding",
+{ "kind": "dev_session", "job_id": "b123451", "feature": "Add How it works section under hero",
   "state": "queued" | "running" | "pr_open" | "done" | "failed", "mode": "local" | "cloud",
-  "step": "editing Onboarding.tsx", "tail": [{ "tool": "Edit", "target": "app/src/Onboarding.tsx" }],
+  "step": "editing LandingPage.tsx", "tail": [{ "tool": "Edit", "target": "app/src/landing/LandingPage.tsx" }],
   "elapsed_s": 134, "procedure": { "title": "...", "steps": 8, "score": 0.8 } | null,
   "session_url": "https://claude.ai/code/..." | null, "pr": 7 | null }
 ```
@@ -131,7 +131,7 @@ Debug: `/ws/quest?debug=1` also streams `{ "kind": "tracks", "tracks": [{ "track
 { "kind": "frame", "ts": 1727467443.12, "jpeg_b64": "...", "w": 1280, "h": 960, "head_pose": [..7 floats..] }
 { "kind": "audio", "ts": ..., "pcm16_b64": "...", "sample_rate": 16000 }
 { "kind": "gesture", "type": "pinch", "target_track_id": 3 }
-{ "kind": "label", "track_id": 3, "name": "Alex" }   // "that's Alex" enrollment
+{ "kind": "label", "track_id": 3, "name": "Matthew" }   // "that's Matthew" enrollment
 { "kind": "dev_action", "action": "approve", "pr": 7 }   // dev cockpit, see HUD messages above
 ```
 
