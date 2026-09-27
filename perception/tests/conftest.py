@@ -1,5 +1,9 @@
+import os
+
 import numpy as np
 import pytest
+
+os.environ.setdefault("DEVFEED", "0")  # no live `gh` polling from service tests (tests/test_devfeed.py fakes gh)
 
 
 def unit(v):

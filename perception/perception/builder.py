@@ -34,6 +34,7 @@ log = logging.getLogger("world.builder")
 HOOK = "feature_request.detected"
 WORKER = "Builder"
 Broadcast = Callable[[dict[str, Any]], Awaitable[None]]
+TOOL_TAPS: list[Callable[[str, str, dict[str, Any]], None]] = []  # (job_id, tool, canonical input); see devfeed.py
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -294,8 +295,9 @@ def action_note(name: str, inp: dict[str, Any]) -> str | None:
 class StreamParser:
     """Parses `claude -p --output-format stream-json --verbose` lines into a canonical trace + stats."""
 
-    def __init__(self, root: str = "") -> None:
+    def __init__(self, root: str = "", on_tool: Callable[[str, dict[str, Any]], None] | None = None) -> None:
         self.root = root
+        self.on_tool = on_tool  # (tool name, canonical input) per tool_use; devfeed.py tails these for the HUD
         self.pending: dict[str, dict[str, Any]] = {}
         self.trace: list[dict[str, Any]] = []
         self.result: dict[str, Any] = {}
@@ -318,6 +320,11 @@ class StreamParser:
                         call = {"name": canon, "input": canonical_input(name, inp, self.root), "result": {"ok": True}}
                         self.pending[b.get("id", "")] = call
                         self.trace.append(call)
+                    if self.on_tool:
+                        try:
+                            self.on_tool(name, canonical_input(name, inp, self.root))
+                        except Exception:  # noqa: BLE001
+                            log.exception("on_tool tap failed")
                     n = action_note(name, inp)
                     if n:
                         notes.append(n)
@@ -390,7 +397,7 @@ class LocalClaudeRunner:
             args += ["--mcp-config", self.cfg.mcp_config]
         proc = await asyncio.create_subprocess_exec(*args, cwd=d, env=self._env(), stdout=asyncio.subprocess.PIPE,
                                                     stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
-        parser = StreamParser(str(d.resolve()))
+        parser = StreamParser(str(d.resolve()), on_tool=lambda name, inp: [tap(job.id, name, inp) for tap in TOOL_TAPS])
         assert proc.stdout is not None
         async for raw in proc.stdout:
             for n in parser.feed(raw.decode(errors="replace")):

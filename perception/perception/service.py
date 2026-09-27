@@ -13,6 +13,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -30,6 +31,7 @@ from .live import RollingExtractor
 from .people import PeopleStore
 from .sinks import FanOut, HudSink, QMSink, StubGBrainSink
 from .builder import Builder, BuilderConfig, BuilderSink, add_builder_routes
+from .devfeed import DevFeed
 from .vision import VisionPipeline
 
 log = logging.getLogger("world")
@@ -74,6 +76,7 @@ class WorldService:
         self.hud = HudSink(self.hub.broadcast, gbrain=self.gbrain)
         self.builder = Builder(BuilderConfig.from_env(), self.hub.broadcast, anchor=self._track_for)
         self.fanout = FanOut([self.gbrain, self.qm, self.hud, BuilderSink(self.builder)])
+        self.devfeed = DevFeed(self.builder, self.hub.broadcast)  # dev cockpit: dev_github / dev_session HUD
         self.conv = ConversationManager(self.s.conv_gap_s, self.s.leave_grace_s)
         self.extractor = extractor or Extractor(self.s.anthropic_model, self.s.wearer_id, self.s.wearer_name)
         self.live = RollingExtractor(self.emit, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name,
@@ -124,6 +127,8 @@ class WorldService:
             asyncio.create_task(self._tick_loop()),
             asyncio.create_task(self.live.loop(lambda: self.conv.current)),
         ]
+        if os.environ.get("DEVFEED", "1") != "0":
+            self._tasks.append(asyncio.create_task(self.devfeed.loop()))
         if hasattr(self.gbrain, "warm"):
             self._tasks.append(asyncio.create_task(self.gbrain.warm(sorted(self.store.people))))
         if self.transcriber is None:
@@ -132,6 +137,7 @@ class WorldService:
     async def stop(self) -> None:
         for t in self._tasks:
             t.cancel()
+        self.devfeed.close()
 
     async def _load_asr(self) -> None:
         try:
@@ -168,6 +174,8 @@ class WorldService:
             log.info("gesture %s on track %s", msg.get("type"), msg.get("target_track_id"))
             if t is not None and t.label:
                 await self.hub.broadcast(await self.hud.person_card(self.vision._encounter_event(t)))
+        elif kind == "dev_action":
+            await self.devfeed.handle_action(msg)
         else:
             log.debug("ignoring message kind %r", kind)
 
@@ -356,8 +364,9 @@ def create_app(service: WorldService | None = None) -> FastAPI:
 
     @app.post("/hud")
     async def post_hud(body: dict[str, Any]):
-        if body.get("kind") not in ("person_card", "memory_event", "agent_activity"):
-            raise HTTPException(422, "kind must be person_card | memory_event | agent_activity")
+        kinds = ("person_card", "memory_event", "agent_activity", "context_delta", "dev_github", "dev_session")
+        if body.get("kind") not in kinds:
+            raise HTTPException(422, "kind must be one of " + " | ".join(kinds))
         await svc.hub.broadcast(body)
         return {"ok": True}
 
