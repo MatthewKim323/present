@@ -32,6 +32,7 @@ from .people import PeopleStore
 from .sinks import FanOut, HudSink, QMSink, StubGBrainSink
 from .builder import Builder, BuilderConfig, BuilderSink, add_builder_routes
 from .devfeed import DevFeed
+from .procfeed import ProcFeed, add_procedure_routes
 from .vision import VisionPipeline
 from .intro import IntroEnroller
 from .visionfx import VisionFx
@@ -76,7 +77,9 @@ class WorldService:
         self.gbrain = self._make_gbrain(StubGBrainSink(self.s.events_log_path, people_meta=self._people_meta))
         self.qm = QMSink(self.s.qm_url)
         self.hud = HudSink(self.hub.broadcast, gbrain=self.gbrain)
-        self.builder = Builder(BuilderConfig.from_env(), self.hub.broadcast, anchor=self._track_for, on_procedure=self.on_procedure)
+        bcfg = BuilderConfig.from_env()
+        self.procfeed = ProcFeed(self.hub.broadcast, bcfg.procedures_dir)  # Memorable phases + library on the HUD (procfeed.py)
+        self.builder = Builder(bcfg, self.hub.broadcast, anchor=self._track_for, on_procedure=self.on_procedure, procfeed=self.procfeed)
         self.fanout = FanOut([self.gbrain, self.qm, self.hud, BuilderSink(self.builder)])
         self.devfeed = DevFeed(self.builder, self.hub.broadcast)  # dev cockpit: dev_github / qm_swarm HUD
         self.conv = ConversationManager(self.s.conv_gap_s, self.s.leave_grace_s)
@@ -141,6 +144,7 @@ class WorldService:
         ]
         if os.environ.get("DEVFEED", "1") != "0":
             self._tasks.append(asyncio.create_task(self.devfeed.loop()))
+        self._tasks.append(asyncio.create_task(self.procfeed.send_library()))
         if hasattr(self.gbrain, "warm"):
             self._tasks.append(asyncio.create_task(self.gbrain.warm(sorted(self.store.people))))
         if self.transcriber is None:
@@ -150,6 +154,7 @@ class WorldService:
         for t in self._tasks:
             t.cancel()
         self.devfeed.close()
+        self.procfeed.close()
         if self.builder.preview:
             self.builder.preview.stop()
 
@@ -332,6 +337,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     app = FastAPI(title="WORLD world service", lifespan=lifespan)
     app.state.svc = svc
     add_builder_routes(app, svc.builder)
+    add_procedure_routes(app, svc.procfeed)
 
     @app.post("/procedures")
     async def post_procedure(body: dict[str, Any]):
@@ -339,7 +345,9 @@ def create_app(service: WorldService | None = None) -> FastAPI:
         draft = body.get("draft") or {}
         if not draft.get("title"):
             raise HTTPException(422, "draft.title required")
-        slug = await svc.on_procedure(body.get("kind") or "learned", draft, body.get("origin") or {})
+        kind = body.get("kind") or "learned"
+        slug = await svc.on_procedure(kind, draft, body.get("origin") or {}) if kind in ("learned", "recalled") else None
+        await svc.procfeed.reported(kind, draft, body.get("origin") or {}, slug)
         return {"ok": True, "slug": slug}
 
     @app.websocket("/ws/quest")
@@ -348,6 +356,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
         svc.source = ws.query_params.get("source", "quest3s")
         debug = ws.query_params.get("debug") in ("1", "true")
         svc.hub.clients.add(ws)
+        await ws.send_text(json.dumps(svc.procfeed.library_msg()))  # late joiners see the procedure library
         if debug:
             svc.debug_clients.add(ws)
         if debug or ws.query_params.get("vision") in ("1", "true"):
@@ -373,6 +382,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     async def ws_hud(ws: WebSocket):
         await ws.accept()
         svc.hub.clients.add(ws)
+        await ws.send_text(json.dumps(svc.procfeed.library_msg()))
         try:
             while True:
                 await ws.receive_text()  # HUD clients may send pings; ignored

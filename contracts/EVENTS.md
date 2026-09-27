@@ -122,6 +122,41 @@ Builder lane. Clients: while a `qm_swarm` with the same `hook` is shown, don't r
 hook (it is still broadcast for older clients). GitHub polling runs every ~5s while a Builder job or swarm is
 active, ~30s otherwise.
 
+### Procedural memory (Memorable, `perception/procfeed.py`, Quest `src/memorypanel.js`)
+
+Memorable is the procedural memory ("what have I learned how to do"), shown apart from GBrain's declarative
+memory. One message per phase of a harness run:
+
+```json
+{ "kind": "procedure", "phase": "recording" | "extracting" | "learned" | "recalled" | "refused",
+  "source": "qm-swarm" | "claude-code", "event_id": "evt_01J..." , "job_id": "b451461",
+  "title": "add discord command",
+  "steps": [{ "seq": 1, "action": "Read", "activity_class": "read" | "search" | "write" | "execute", "target": "discord-bot/core/bot.py" }],
+  "steps_total": 14,                 // only when steps was capped at 12
+  "trigger": "ship customer feature request: Add !recap command",
+  "gbrain_slug": "procedures/add-discord-command",   // learned/recalled: where GBrain mirrored it (null on the stub)
+  "admitted": true, "reason": "no_postcondition",    // refused: Memorable's judge reason, verbatim
+  "tool_calls_seen": 7 }                              // recording: running count of captured tool calls
+```
+
+Builder (`claude-code`): `recalled` (before the coder starts, steps injected into its prompt) -> `recording` when the
+coder starts, re-sent with a rising `tool_calls_seen` as tool calls stream in -> `extracting` when it POSTs Memorable
+`/v1/extract` (skipped when Memorable is not configured) -> `learned` (admitted draft + GBrain slug) or `refused`
+(`reason`). QM (`qm-swarm`): `POST :8787/procedures {kind: "learned" | "recalled" | "refused", draft: {title, steps?,
+task?}, origin: {harness, event_id?, job_id?, reason?}}` -> GBrain mirror (learned/recalled) -> the same `procedure`
+message with the slug. Fields that are unknown are omitted, never faked. `target` is a short redacted path or the first
+line of a command.
+
+```json
+{ "kind": "procedure_library", "items": [{ "title": "add discord command", "steps_count": 5, "source": "claude-code",
+  "learned_at": "2026-09-27T21:04:11Z", "uses": 1, "gbrain_slug": "procedures/add-discord-command" }] }
+```
+
+Full snapshot, newest first: local Builder drafts (`perception/data/procedures/*.json`) plus QM-learned procedures
+(index in `perception/data/procedure_library.json`, which also holds GBrain slugs and recall counts). Sent to each HUD
+client on connect, on service start, and after every learn / recall. `GET :8787/procedures` returns
+`{count, items: [...same + steps, trigger, path]}`.
+
 Quest -> world service (over /ws/quest), acting on those panels:
 
 ```json
