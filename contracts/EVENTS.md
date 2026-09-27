@@ -51,13 +51,16 @@ QM  --traces-->  Memorable  (native QM integration)
 ```json
 { "kind": "person_card", "anchor_track_id": 3, "person_id": "alex",
   "name": "ALEX", "subtitle": "founder · Acme", "last": "Syla onboarding",
-  "owes_you": "feedback", "you_owe": "demo" }
+  "owes_you": "feedback", "you_owe": "demo",
+  "bbox": [x, y, w, h] }   // optional, normalized 0-1 in source frame, used for XR anchoring
 
 { "kind": "memory_event", "text": "CUSTOMER FEEDBACK REMEMBERED", "detail": "Canvas onboarding" }
 
 { "kind": "agent_activity", "anchor_track_id": 3, "hook": "customer_feedback.detected",
   "workers": [{ "name": "Context", "state": "running" | "done" | "failed", "note": "searching GBrain" }] }
 ```
+
+Debug: `/ws/quest?debug=1` also streams `{ "kind": "tracks", "tracks": [{ "track_id", "bbox", "person_id", "label" }] }` for anchoring.
 
 ## Quest -> world service (over /ws/quest)
 

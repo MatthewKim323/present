@@ -8,7 +8,7 @@ Read CLAUDE.md, contracts/EVENTS.md, docs/SPONSORS.md, docs/QM.md first.
 |---|---|---|
 | Event contract v0 | `contracts/EVENTS.md` | done, binding for all components |
 | Perception / world service (:8787) | `perception/` | built by agent: YuNet+SFace faces, tracker, enrolled store, VAD/ASR, Claude extraction, sinks. Photo-folder enroll (`python -m perception.enroll --from-dir perception/data/enroll/`) was requested, check if it landed. Webcam sim + `demo_inject.py` requested. See `perception/README.md` |
-| Quest client | `quest/` | WebXR + three.js scaffold, ws link, 3 HUD states, desktop mode, mock server. See `quest/README.md` for camera-access findings and headset setup |
+| Quest client | `quest/` | DONE (untested on real headset). WebXR immersive-ar + getUserMedia camera (UNVERIFIED on 3S: whether passthrough cams show up and keep streaming during XR; in-headset status strip tells you in ~10s). Fallback `?video=0`: laptop/phone is the eye, headset does HUD+mic. Needs Horizon OS v76+, dev mode, `npm run adb:reverse`. WebXR raw camera access NOT available. See `quest/README.md` |
 | QM fork | `~/dev/qm`, branch `worldhooks`, fork of yc-software/qm | `POST /world-events` ingress added + sample customer feedback event. See `docs/QM.md` |
 | Sponsor research | `docs/SPONSORS.md` | done. Memorable = QM memory provider `type: "memorable"` in `MEMORY_PROVIDER_CONFIG`, no LLM key needed |
 | Enrollment photos | `perception/data/enroll/matthew/` (5 jpgs, gitignored) | need 8-15 pics each of the in-front-of-headset people (Alex actor, customer #2 actor) |
