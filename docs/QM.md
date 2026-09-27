@@ -62,7 +62,7 @@ Per arm (valid runs only):
 Honest read:
 
 - The big win is plumbing, not memory: swarm v2 cut the same Opal flow from a median 42 tool calls / 13 turns / 272s to 25 / 4 / 133s with recall off. Root calls went 9-27 -> 4, turns went from notification ping-pong to exactly one per session, worker discovery calls (`/v1/apis`, `GET /v1/swarm`, `?read=1`, `sleep`) went to 0 in the recall-off runs except N3 (2).
-- On top of that, recall-on runs used fewer calls (17, 18 vs 22, 25, 27). That is n=2 vs n=3 with overlapping-free ranges but tiny n; wall time is inside the noise (103/123s vs 100/133/136s). Not enough runs to claim a percentage; the ON arm needs 3+ more runs under the current briefs.
+- On top of that, recall-on runs used fewer calls (17, 18 vs 22, 25, 27). The ranges do not overlap, but that is n=2 vs n=3; wall time is inside the noise (103/123s vs 100/133/136s). Not enough runs to claim a percentage; the ON arm needs 3+ more runs under the current briefs.
 - Where the remaining calls go (N4, recall on, 18 calls): root 4 (spawn_plan, await, summary, verify), Context 6 (GBrain person + query, signal log, context.md, summary to Builder, report), Product 3, Builder 5 (await Context, dispatch.json, POST /builder/dispatch, verify, report). Swarm API calls: 7 of 18, all spawn/await/report, no polling.
 - The next measurement should use the current briefs (a914c2c, `$GBRAIN_PROXY_TOKEN`, GBrain actually answering) with fresh commands per run; results above predate that and are labeled with their briefs.
 
