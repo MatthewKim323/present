@@ -188,7 +188,7 @@ export function deskZones(vw, vh, face, ghUp = false) {
   const f = face || { x: vw * 0.5 - 70, y: vh * 0.24, w: 140, h: 150 };
   // k: side panels shrink until card column + right rail fit right of the face
   const room = vw - D.pad - (f.x + f.w + D.faceGap) - D.gap;
-  const k = Math.max(D.minScale, Math.min(D.modeScale, room / (D.cardW + D.railW)));
+  const k = Math.max(D.minScale, Math.min(D.modeScale, room / (D.cardW + (show('qmswarm') ? D.railW : 0)))); // minimal: no rail to leave room for
   const railW = D.railW * k;
   const right = { x: vw - D.pad - railW, y: D.pad, w: railW, k };
   let cardX = f.x + f.w + D.faceGap;
@@ -197,15 +197,14 @@ export function deskZones(vw, vh, face, ghUp = false) {
   const brain = { x: D.pad, y: leftTop, w: D.brainW * k, k };
   const brainH = (30 + BRAIN_LINES * 31) * k; // reserved: the column doesn't jump as lines come and go
   const gh = { w: D.ghW * k, k, cx: f.x + f.w / 2, bottom: vh - D.pad };
-  // graph: left of the face, under the GBRAIN rail when the screen is narrow
-  const gx0 = D.pad, gx1 = f.x - D.faceGap;
-  const narrow = gx1 - (brain.x + brain.w + D.gap) < D.graphW * D.graphMinPx * k;
-  const swarm = narrow
-    ? { x: gx0, y: brain.y + brainH + D.gap * 2, w: gx1 - gx0, h: 0 }
-    : { x: brain.x + brain.w + D.gap * 2, y: Math.max(leftTop, f.y - 40), w: gx1 - (brain.x + brain.w + D.gap * 2), h: 0 };
-  swarm.h = Math.max(120, vh - D.pad - swarm.y);
-  // the GitHub panel (lower center) takes the bottom band under the face: the graph stops at its left edge
-  if (ghUp) { const ghX = gh.cx - gh.w / 2 - D.gap; if (ghX < swarm.x + swarm.w) swarm.w = Math.max(160, ghX - swarm.x); }
+  // graph: left of the face. Two candidates, beside the GBRAIN rail or under it; keep whichever fits the
+  // graph bigger (labels are fixed size, so a squeezed graph overlaps its own labels)
+  const gx1 = f.x - D.faceGap;
+  const ghX = ghUp ? gh.cx - gh.w / 2 - D.gap : Infinity; // GitHub panel (lower center) owns the bottom band
+  const fit = (z) => { z.h = Math.max(120, vh - D.pad - z.y); z.w = Math.max(160, Math.min(z.w, ghX - z.x)); z.fit = Math.min(z.w / D.graphW, z.h / D.graphH); return z; };
+  const beside = fit({ x: brain.x + brain.w + D.gap * 2, y: Math.max(leftTop, f.y - 40), w: gx1 - (brain.x + brain.w + D.gap * 2) });
+  const under = fit({ x: D.pad, y: brain.y + brainH + D.gap * 2, w: gx1 - D.pad });
+  const swarm = under.fit > beside.fit * 1.05 ? under : beside;
   const toast = { cx: vw / 2, y: D.toastY, minX: ui && ui.width < vw * 0.6 && ui.top < 60 ? ui.right + D.gap : D.pad };
   return { k, face: f, card, right, brain, brainH, gh, swarm, toast, vw, vh };
 }
