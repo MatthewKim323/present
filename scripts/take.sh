@@ -104,6 +104,8 @@ NDRAFT=$(ls "$DATA"/procedures/*.json 2>/dev/null | wc -l | tr -d ' ')
 if [ "$CLEAR" = 1 ] && [ "$NDRAFT" -gt 0 ]; then
   if fix "move $NDRAFT local drafts aside"; then
     B="$DATA/procedures.bak-$(date +%Y%m%d-%H%M%S)"; mkdir -p "$B" && mv "$DATA"/procedures/*.json "$B"/ && ok "moved $NDRAFT Builder drafts to ${B#$ROOT/}"
+    # the HUD library index (QM titles, recall counts) goes with them so the strip starts at zero
+    [ -f "$DATA/procedure_library.json" ] && mv "$DATA/procedure_library.json" "$B"/ && ok "moved procedure_library.json aside"
   fi
 else
   ok "local Builder drafts: $NDRAFT $([ "$CLEAR" = 1 ] && echo '(none to clear)' || echo '(kept)')"
