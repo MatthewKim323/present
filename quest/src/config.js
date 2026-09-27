@@ -15,7 +15,7 @@ export const config = {
   audio: q.get('audio') !== '0',
   audioChunkMs: num('chunk', 250),
   hfov: num('hfov', 80),                  // passthrough camera horizontal FOV (deg), for anchoring
-  cardDistance: num('dist', 1.6),         // meters in front of the head when no depth
+  cardDistance: num('dist', 1.0),         // meters in front of the head (HUD plane); ?dist=0.8..1.6 to tune on the headset
   mock: q.get('mock') === '1',            // scripted HUD demo, no server needed
   emulate: q.get('emulate') === '1',      // IWER WebXR emulator for desktop dev
   camHint: q.get('cam') || '',            // substring of camera label to prefer

@@ -74,7 +74,7 @@ export const XR = {
   // far left rail: GBRAIN feed, right edge = graph left edge - colGap
   leftTop: 0.28,
   brainClear: 0.24,                // gap between the GBRAIN rail and the graph's EVENT node (graph meters)
-  dist: 1.6,                       // default; xr.js overrides from ?dist= (config.cardDistance)
+  dist: 1.0,                       // default; xr.js overrides from ?dist= (config.cardDistance)
   // lower center: GitHub PR panel, top edge this far under the face bottom (clears chip + barcode + filmstrip)
   ghBelow: 0.2,
   // top center toasts: above the person's head (person frame), one line; head-locked fallback when nobody is there
