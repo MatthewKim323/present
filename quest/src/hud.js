@@ -2,6 +2,7 @@
 // Renderer-agnostic. Desktop and XR both read from this.
 
 import { applyDev, withDeltas } from './devpanels.js';
+import { applyVision } from './visionfx.js';
 
 const TOAST_MS = 4200;
 const TRACK_STALE_MS = 4000;
@@ -25,6 +26,7 @@ export class HudState {
   apply(msg) {
     if (!msg || typeof msg !== 'object') return;
     if (applyDev(this, msg)) { this.touch(); return; } // dev cockpit + context_delta (devpanels.js)
+    if (applyVision(this, msg)) { this.touch(); return; } // perception overlay: vision / face_capture / relationship_vector (visionfx.js)
     if (msg.type === 'person.encountered' && msg.payload) {
       const p = msg.payload;
       this._track(p.track_id, p.bbox, p.label);

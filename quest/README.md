@@ -73,6 +73,19 @@ locally) pops in ~0.9 m in front of the wearer, world-locked; pinch scrolls, pin
 closes, OPEN = open preview. Pinching APPROVE / OPEN PREVIEW / COMMENT sends `dev_action`. Hooks in
 the other files are one-liners (grep `devpanels`); `?mock=1` plays it too.
 
+Perception overlay (`src/visionfx.js`): `vision` (~5 Hz, only on `?debug=1`/`?vision=1`
+sockets) draws corner-bracket reticles, the 5 YuNet landmarks, a scan line while
+detecting/matching, a label chip (`UNKNOWN PERSON 03` -> `MATCHING 0.41` -> `MATTHEW 0.87`
+with a lock-on + letter-decode), top enrolled candidates (left of the face, fade after
+lock) and a 16-bar embedding barcode on each face. Learning (self-intro "I'm Matthew"
+or a `label`): progress ring with one tick per sample + a filmstrip of `face_capture`
+crops (shown, never stored), then a `FACE LEARNED · MATTHEW` toast (swallows the
+service's duplicate `PERSON ENROLLED`). `relationship_vector` = radar above the person
+card (desktop: under the card column when there's no headroom). XR: one unit plane per
+face at `?dist=`, sized from the bbox and `?hfov=`, head-facing, under the cards.
+`?mock=1` scripts it first (unknown -> intro -> learning -> recognized -> radar grows)
+and starts the rest of the demo 6.5s later.
+
 ## Run it (desktop, no headset)
 
 ```bash

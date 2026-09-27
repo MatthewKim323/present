@@ -1,6 +1,7 @@
 // Desktop mode: HUD composited over the webcam feed. Same panels as XR.
 import { drawMemoryToast, drawAgentActivity, anyRunning } from './panels.js';
 import { drawPersonCardPlus as drawPersonCard, deltasAnimating, DesktopDev } from './devpanels.js';
+import { DesktopVision } from './visionfx.js';
 
 export class DesktopHud {
   constructor({ canvas, video, hud, onPinch }) {
@@ -13,6 +14,7 @@ export class DesktopHud {
     this.hits = [];
     this.running = false;
     this.dev = new DesktopDev(hud);
+    this.vfx = new DesktopVision(hud); // perception overlay (visionfx.js)
     window.addEventListener('resize', () => this._resize());
     // Click a card (or a person box) = pinch on that track.
     window.addEventListener('click', (e) => {
@@ -107,6 +109,7 @@ export class DesktopHud {
     }
 
     this.dev.draw(ctx, placed, vr);
+    this.vfx.draw(ctx, placed, vr, this.hits);
 
     let ty = innerHeight - 56;
     for (const t of hud.liveToasts().reverse()) {
