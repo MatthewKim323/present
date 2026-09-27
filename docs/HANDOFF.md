@@ -23,7 +23,7 @@ Read CLAUDE.md, contracts/EVENTS.md, docs/SPONSORS.md, docs/QM.md first.
 
 1. ~~`MEMORABLE_API_KEY`~~ DONE via device flow, lives in `.env.memorable` (gitignored). `set -a; . ./.env.memorable; set +a` to load.
 2. gbrain.io OAuth via `/mcp`.
-3. `ANTHROPIC_API_KEY` in `perception/.env`. OpenAI key is in `~/.zshrc`.
+3. ~~`ANTHROPIC_API_KEY`~~ DONE in `perception/.env` (auto-loaded). Real extraction verified on Alex scenario: correct customer_feedback + commitment + summary, but 9.4s latency on claude-sonnet-5, consider haiku for stage. OpenAI key is in `~/.zshrc`.
 4. Quest in dev mode, USB-C, Horizon OS version.
 5. Approve `memorable enable --scope <worldhook scope>` (human consent required).
 6. Booth asks: GBrain (self-hosted ok? credits), Memorable (credits, ORG_ID still needed?), QM (which scope for event-triggered swarm).
