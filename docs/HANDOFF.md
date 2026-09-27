@@ -9,7 +9,7 @@ Read CLAUDE.md, contracts/EVENTS.md, docs/SPONSORS.md, docs/QM.md first.
 | Event contract v0 | `contracts/EVENTS.md` | done, binding for all components |
 | Perception / world service (:8787) | `perception/` | DONE, 24 tests pass. Faces (YuNet+SFace, ~20ms/frame), whisper ASR verified live, HUD fanout verified. Claude extraction only mock-tested (needs ANTHROPIC_API_KEY, then `demo_inject --via-llm`). GBrain sink is a STUB (`sinks.py` StubGBrainSink, writes data/events.jsonl) -> replace with gbrain.io. QM sink posts to `$QM_URL/world-events`. Extras: `POST /hud` (QM pushes agent_activity), `/ws/quest?debug=1` tracks. matthew enrolled from 5 photos (5/5 self-match). Run: `uv run python -m perception`, sim: `python -m perception.sim`. See `perception/README.md` |
 | Quest client | `quest/` | DONE (untested on real headset). WebXR immersive-ar + getUserMedia camera (UNVERIFIED on 3S: whether passthrough cams show up and keep streaming during XR; in-headset status strip tells you in ~10s). Fallback `?video=0`: laptop/phone is the eye, headset does HUD+mic. Needs Horizon OS v76+, dev mode, `npm run adb:reverse`. WebXR raw camera access NOT available. See `quest/README.md` |
-| QM fork | `~/dev/qm`, branch `worldhooks`, fork of yc-software/qm | `POST /world-events` ingress added + sample customer feedback event. See `docs/QM.md` |
+| QM fork | `~/dev/qm`, branch `worldhooks` (MatthewKim323/qm) | VERIFIED E2E: curl customer_feedback.detected -> 202 -> root agent spawns Context/Product/Follow-up swarm on Docker sandboxes -> drafts issue + reply, awaits approval, sends nothing. ~4 min per swarm (too slow for stage, needs tuning or pre-warm). Running now: Postgres 17 :55432 + QM :8090 (started from a scratchpad dir). Uses HARNESS=codex (~/.codex/auth.json) because shell OPENAI_API_KEY is OUT OF CREDITS. Needs SANDBOX_RESOURCES_ENABLED=true. Another session pushed a feature_request swarm (8ffb9f4) and edited deploy/worldhooks/world-hooks.json: confirm customer_feedback route still there. GBrain not wired into QM (needs MCP URL + OAuth client creds). See `docs/QM.md` |
 | Sponsor research | `docs/SPONSORS.md` | done. Memorable = QM memory provider `type: "memorable"` in `MEMORY_PROVIDER_CONFIG`, no LLM key needed |
 | Enrollment photos | `perception/data/enroll/matthew/` (5 jpgs, gitignored) | need 8-15 pics each of the in-front-of-headset people (Alex actor, customer #2 actor) |
 
@@ -23,7 +23,7 @@ Read CLAUDE.md, contracts/EVENTS.md, docs/SPONSORS.md, docs/QM.md first.
 
 1. ~~`MEMORABLE_API_KEY`~~ DONE via device flow, lives in `.env.memorable` (gitignored). `set -a; . ./.env.memorable; set +a` to load.
 2. gbrain.io OAuth via `/mcp`.
-3. ~~`ANTHROPIC_API_KEY`~~ DONE in `perception/.env` (auto-loaded). Real extraction verified on Alex scenario: correct customer_feedback + commitment + summary, but 9.4s latency on claude-sonnet-5, consider haiku for stage. OpenAI key is in `~/.zshrc`.
+3. ~~`ANTHROPIC_API_KEY`~~ DONE in `perception/.env` (auto-loaded). Real extraction verified on Alex scenario: correct customer_feedback + commitment + summary, but 9.4s latency on claude-sonnet-5, consider haiku for stage. OpenAI key in `~/.zshrc` is OUT OF CREDITS (breaks embeddings + openai harness), top it up.
 4. Quest in dev mode, USB-C, Horizon OS version.
 5. Approve `memorable enable --scope <worldhook scope>` (human consent required).
 6. Booth asks: GBrain (self-hosted ok? credits), Memorable (credits, ORG_ID still needed?), QM (which scope for event-triggered swarm).
