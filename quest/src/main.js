@@ -159,8 +159,9 @@ const emulated = config.emulate
   : Promise.resolve();
 
 emulated.then(() => XrHud.supported()).then((ok) => {
-  $('btn-ar').disabled = !ok;
-  if (!ok) $('btn-ar').title = 'immersive-ar not available in this browser';
+  // Never lock the button on a headset: some Quest Browser builds under-report support. Try anyway, log why.
+  $('btn-ar').disabled = !ok && !isQuest;
+  if (!ok) { $('btn-ar').title = 'immersive-ar not reported by this browser'; log(`immersive-ar supported=${ok} xr=${!!navigator.xr} secure=${isSecureContext}`); }
 });
 
 log(`${source} · ${navigator.userAgent.match(/OculusBrowser\/[\d.]+/)?.[0] || 'desktop'}`);

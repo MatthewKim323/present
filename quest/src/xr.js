@@ -72,7 +72,15 @@ export class XrHud {
     let domRoot = document.getElementById('xr-dom');
     if (!domRoot) { domRoot = document.createElement('div'); domRoot.id = 'xr-dom'; document.body.appendChild(domRoot); }
     init.domOverlay = { root: domRoot };
-    const session = await navigator.xr.requestSession('immersive-ar', init);
+    let session;
+    try {
+      session = await navigator.xr.requestSession('immersive-ar', init);
+    } catch (e) {
+      // Some Quest Browser builds reject the optional features (dom-overlay/hand-tracking): retry bare.
+      console.warn('immersive-ar with optional features failed, retrying bare:', e);
+      session = await navigator.xr.requestSession('immersive-ar', { optionalFeatures: ['local-floor', 'hand-tracking'] })
+        .catch(() => navigator.xr.requestSession('immersive-ar'));
+    }
     this.session = session;
     await renderer.xr.setSession(session);
     if (this.config.hz && session.updateTargetFrameRate && [...(session.supportedFrameRates || [])].includes(this.config.hz)) {
