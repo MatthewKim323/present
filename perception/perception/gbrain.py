@@ -398,6 +398,39 @@ class RelState:
         return st
 
 
+# ---------------- Memorable -> GBrain bridge ----------------
+
+def procedure_slug(title: str) -> str:
+    return f"procedures/{(slugify(title) or 'procedure')[:60]}"
+
+
+def procedure_page(doc: dict[str, Any], origin: dict[str, Any], situation: Situation, refs: list[str]) -> str:
+    """A Memorable draft as a human-readable GBrain page: steps, conditions, and the real-world moment it was learned from."""
+    title = doc.get("title") or "procedure"
+    steps = doc.get("steps") or []
+    lines = [f"# {title}", "", "Procedural memory: how WORLD's agents learned to do this, extracted by Memorable from a real run.", ""]
+    lines += [f"Learned from: {', '.join(refs)}", ""]
+    if doc.get("task"):
+        lines += [f"Task: {doc['task']}", ""]
+    lines += ["## Steps", ""]
+    for st in steps:
+        tgt = st.get("command") or ", ".join(st.get("targets") or [])
+        rep = f" x{st['repeat_count']}" if (st.get("repeat_count") or 1) > 1 else ""
+        lines.append(f"{st.get('seq', '')}. {st.get('action', '')} ({st.get('activity_class', '')}){rep}" + (f": `{tgt}`" if tgt else ""))
+    for name, key in (("Preconditions", "preconditions"), ("Postconditions", "postconditions")):
+        if doc.get(key):
+            lines += ["", f"## {name}", ""] + [f"- {x}" for x in doc[key]]
+    m = origin.get("metrics") or {}
+    if m:
+        lines += ["", "## First run", ""] + [f"- {k}: {v}" for k, v in m.items() if v is not None]
+    lines += ["", "## Recalls", ""]
+    front = {"type": "procedure", "title": title, "created_by": "world", "source": "memorable",
+             "harness": origin.get("harness"), "memorable_request_id": doc.get("request_id"),
+             "learned_from_event": origin.get("event_id"), "learned_at": situation.slug,
+             "people": origin.get("people") or None, "project": origin.get("project"), "steps": len(steps)}
+    return _page(front, "\n".join(lines))
+
+
 # ---------------- the sink ----------------
 
 SIGNAL_DIRS = {
@@ -450,6 +483,7 @@ class GBrainIOSink:
         self._worker: asyncio.Task | None = None
         self.writes_ok = 0
         self.writes_failed = 0
+        self._signal_slugs: dict[str, str] = {}  # event id -> signal page slug
 
     # ---------- health ----------
     @property
@@ -768,6 +802,8 @@ class GBrainIOSink:
         refs = [f"[[people/{x['id']}]]" for x in others] + ([f"[[projects/{slugify(project)}]]"] if project else []) + [f"[[{self.situation.slug}]]"]
         body = f"# {title}\n\n" + "".join(f"- {x}\n" for x in body_lines if x) + f"\nCaptured in person by WORLD. Related: {', '.join(refs)}\n"
         content = _page(front, body)
+        if event.get("id"):
+            self._signal_slugs[event["id"]] = slug
 
         # live relationship state (instant on the card)
         for x in others:
@@ -886,6 +922,54 @@ class GBrainIOSink:
             "recent_deltas": list(reversed(st.deltas[-3:])) if st else [],
         })
         return ctx
+
+    # ---------- Memorable -> GBrain bridge ----------
+    async def remember_procedure(self, doc: dict[str, Any], origin: dict[str, Any]) -> str | None:
+        """Mirror an admitted Memorable procedure into GBrain, linked to the person, project, event and signal it came from."""
+        if self.mcp is None or not doc.get("title"):
+            return None
+        slug = procedure_slug(doc["title"])
+        people = [p for p in (origin.get("people") or []) if p and p != self.wearer_id]
+        project = origin.get("project")
+        pslug = f"projects/{slugify(project)}" if project else None
+        sig = self._signal_slugs.get(origin.get("event_id") or "")
+        refs = [f"[[people/{p}]]" for p in people] + ([f"[[{pslug}]]"] if pslug else []) + ([f"[[{sig}]]"] if sig else []) + [f"[[{self.situation.slug}]]"]
+        content = procedure_page(doc, {**origin, "people": people}, self.situation, refs)
+
+        async def job() -> None:
+            await self._call("put_page", {"slug": slug, "content": content})
+            self._known_pages.add(slug)
+            await self._ensure_page(self.situation.slug, self.situation.page())
+            await self._link(slug, self.situation.slug, "learned_at")
+            if pslug:
+                await self._link(slug, pslug, "about")
+            if sig:
+                await self._link(slug, sig, "learned_from")
+            for pid in people:
+                await self._link(slug, f"people/{pid}", "learned_from")
+                await self._timeline(self.rel_slug(pid), f"Agents learned a procedure from this conversation: {doc['title']}",
+                                     f"see [[{slug}]], {len(doc.get('steps') or [])} steps, at {self.situation.label}")
+            await self._timeline(slug, f"Learned ({origin.get('harness') or 'agent'})", f"from {', '.join(refs)}")
+
+        self._enqueue(job)
+        return slug
+
+
+    async def procedure_recalled(self, doc: dict[str, Any], origin: dict[str, Any]) -> str | None:
+        """Record on the procedure page (and the relationship) that a new real-world moment recalled it."""
+        if self.mcp is None or not doc.get("title"):
+            return None
+        slug = procedure_slug(doc["title"])
+        people = [p for p in (origin.get("people") or []) if p and p != self.wearer_id]
+        what = origin.get("feature") or "a similar request"
+
+        async def job() -> None:
+            await self._timeline(slug, f"Recalled for: {what}", f"at {self.situation.label}, event {origin.get('event_id') or '-'}")
+            for pid in people:
+                await self._timeline(self.rel_slug(pid), f"Agents reused a learned procedure: {doc['title']}", f"see [[{slug}]], for {what}")
+
+        self._enqueue(job)
+        return slug
 
 
 # ---------------- factory ----------------

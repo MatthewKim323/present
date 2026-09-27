@@ -133,6 +133,7 @@ class Job:
     branch: str
     mode: str
     anchor_track_id: int | None = None
+    person_id: str | None = None
     state: str = "queued"  # queued | running | pr_open | done | failed
     note: str = ""
     created: float = field(default_factory=time.time)
@@ -572,7 +573,7 @@ class ProcedureMemory:
                "trigger_signature": draft.get("trigger_signature", {}), "request_id": data.get("request_id")}
         path = self.dir / f"{slug(draft.get('title') or job.feature) or job.id}-{job.id}.json"
         path.write_text(json.dumps(doc, indent=1))
-        return {"stored": True, "title": doc["title"], "steps": len(doc["steps"]), "path": str(path)}
+        return {"stored": True, "title": doc["title"], "steps": len(doc["steps"]), "path": str(path), "doc": doc}
 
 
 # ---------------------------------------------------------------- Builder
@@ -589,7 +590,8 @@ def activity(job: Job, state: str, note: str) -> dict[str, Any]:
 
 class Builder:
     def __init__(self, cfg: BuilderConfig, broadcast: Broadcast, *, runner: Runner | None = None, github: Any = None,
-                 procedures: ProcedureMemory | None = None, anchor: Callable[[str | None], int | None] | None = None) -> None:
+                 procedures: ProcedureMemory | None = None, anchor: Callable[[str | None], int | None] | None = None,
+                 on_procedure: Callable[[str, dict[str, Any], dict[str, Any]], Awaitable[Any]] | None = None) -> None:
         self.cfg = cfg
         self.broadcast = broadcast
         mode = cfg.resolved_mode()
@@ -597,6 +599,7 @@ class Builder:
         self.github = github or GhCli()
         self.procedures = procedures or ProcedureMemory(cfg)
         self.anchor = anchor or (lambda pid: None)
+        self.on_procedure = on_procedure  # ("learned" | "recalled", procedure doc, origin) -> e.g. mirror into GBrain
         self.jobs: dict[str, Job] = {}
         self.by_event: dict[str, str] = {}
         self.tasks: dict[str, asyncio.Task] = {}
@@ -614,7 +617,8 @@ class Builder:
         jid = f"b{int(time.time()) % 100000:05d}{self._n}"
         job = Job(id=jid, event_id=event_id, spec=s, repo=repo or self.cfg.repo,
                   branch=f"world/{(slug(s['feature']) or 'feature')[:40]}-{jid}", mode=self.runner.name,
-                  anchor_track_id=anchor_track_id if anchor_track_id is not None else self.anchor(person_id))
+                  anchor_track_id=anchor_track_id if anchor_track_id is not None else self.anchor(person_id),
+                  person_id=person_id)
         self.jobs[jid] = job
         if event_id:
             self.by_event[event_id] = jid
@@ -630,6 +634,19 @@ class Builder:
             await self.broadcast(activity(job, hud, note))
         except Exception:  # noqa: BLE001
             log.exception("builder broadcast failed")
+
+    def _origin(self, job: Job) -> dict[str, Any]:
+        people = [p for p in (job.person_id, (job.spec.get("requested_by") or "").strip().lower() or None) if p]
+        return {"event_id": job.event_id, "people": list(dict.fromkeys(people)), "project": job.spec.get("product"),
+                "feature": job.feature, "harness": "claude-code", "job_id": job.id}
+
+    async def _notify_procedure(self, kind: str, doc: dict[str, Any], job: Job, metrics: dict[str, Any] | None = None) -> None:
+        if self.on_procedure is None:
+            return
+        try:
+            await self.on_procedure(kind, doc, {**self._origin(job), "metrics": metrics or {}})
+        except Exception:  # noqa: BLE001
+            log.exception("procedure hook failed")
 
     async def _progress(self, job: Job, note: str) -> None:
         if job.state in ("queued", "running"):
@@ -651,6 +668,7 @@ class Builder:
         if job.recalled:
             await self.broadcast({"kind": "memory_event", "text": "RECALLED PROCEDURE",
                                   "detail": f"{job.recalled.get('title')} · {len(job.recalled.get('steps', []))} steps"})
+            await self._notify_procedure("recalled", job.recalled, job)
         prompt = build_prompt(job)
         await self._set(job, "running", f"coding: {job.feature}")
         run_task = asyncio.create_task(self.runner.run(job, prompt, lambda n: self._progress(job, n)))
@@ -709,7 +727,12 @@ class Builder:
         if result and result.trace:
             try:
                 job.procedure = await self.procedures.record(job, result.trace)
-                log.info("builder %s memorable: %s", job.id, job.procedure)
+                log.info("builder %s memorable: %s", job.id, {k: v for k, v in job.procedure.items() if k != "doc"})
+                doc = job.procedure.pop("doc", None)
+                if job.procedure.get("stored") and doc:
+                    await self._notify_procedure("learned", doc, job, {
+                        "tool_calls": job.stats.get("tool_calls"), "turns": job.stats.get("num_turns"),
+                        "seconds_to_pr": job.timings.get("pr_opened"), "seconds_to_preview": job.timings.get("preview_ready")})
             except Exception as e:  # noqa: BLE001
                 job.procedure = {"stored": False, "reason": str(e)[:100]}
 

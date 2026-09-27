@@ -65,7 +65,7 @@ class FakeMemory:
 
     async def record(self, job, trace):
         self.recorded.append(trace)
-        return {"stored": True, "title": "t", "steps": len(trace)}
+        return {"stored": True, "title": "t", "steps": len(trace), "doc": {"title": "t", "steps": trace}}
 
 
 def make(tmp_path, **kw):
@@ -77,7 +77,8 @@ def make(tmp_path, **kw):
         sent.append(m)
 
     b = Builder(cfg, bc, runner=kw.pop("runner", FakeRunner()), github=kw.pop("github", FakeGitHub()),
-                procedures=kw.pop("procedures", FakeMemory()), anchor=lambda pid: 3 if pid == "matthew" else None)
+                procedures=kw.pop("procedures", FakeMemory()), anchor=lambda pid: 3 if pid == "matthew" else None,
+                on_procedure=kw.pop("on_procedure", None))
     return b, sent
 
 
@@ -251,3 +252,18 @@ def test_dispatch_endpoint(tmp_path):
         jid = r.json()["job_id"]
         assert c.get(f"/builder/jobs/{jid}").json()["feature"] == SPEC["feature"]
         assert c.get("/builder/jobs/nope").status_code == 404
+
+
+async def test_learned_and_recalled_procedures_reach_the_hook(tmp_path):
+    seen = []
+
+    async def hook(kind, doc, origin):
+        seen.append((kind, doc["title"], origin))
+
+    b, _ = make(tmp_path, procedures=FakeMemory(recalled={"title": "old", "steps": []}), on_procedure=hook)
+    job = await b.dispatch("evt_9", SPEC, person_id="matthew")
+    await finish(b, job)
+    assert [k for k, *_ in seen] == ["recalled", "learned"]
+    origin = seen[1][2]
+    assert origin["event_id"] == "evt_9" and "matthew" in origin["people"] and origin["harness"] == "claude-code"
+    assert origin["metrics"]["tool_calls"] == 3 and "doc" not in job.procedure

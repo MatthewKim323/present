@@ -369,4 +369,36 @@ def test_seed_files_load_and_reset_stamp():
     fm, body = parse_front(stamped)
     assert fm["reset_at"] == "2026-09-27T20:00:00Z" and "## Open loops" in body
     st = RelState.from_page("matthew", "Matthew", {"frontmatter": fm, "compiled_truth": body})
-    assert st.summary is None and st.facts == [] and st.reset_at  # TODO placeholders never reach the card
+    assert st.summary.startswith("friends since 2019") and st.facts and st.reset_at
+    assert not any(f.upper().startswith("TODO") for f in st.facts)  # placeholders never reach the card
+
+
+DRAFT = {"title": "Add onboarding checklist to landing", "task": "ship customer feature request: onboarding checklist",
+         "steps": [{"seq": 1, "action": "Read", "activity_class": "read", "command": "app/src/App.tsx", "repeat_count": 2},
+                   {"seq": 2, "action": "Edit", "activity_class": "write", "command": "app/src/App.tsx"},
+                   {"seq": 3, "action": "Bash", "activity_class": "execute", "command": "npm run build"}],
+         "postconditions": ["final command exited successfully: npm run build"], "request_id": "req_1"}
+
+
+async def test_memorable_procedure_lands_in_gbrain_linked_to_its_origin():
+    sink, mcp = make_sink()
+    fr = make_event("feature_request.detected", {"product": "Opal", "feature": "onboarding checklist", "request": "add a checklist",
+                                                "requested_by": "Matthew"}, people=[STEPHEN, MATT], project="opal")
+    await sink.emit(fr)
+    await sink.flush()
+    slug = await sink.remember_procedure(DRAFT, {"event_id": fr["id"], "people": ["matthew", "stephen"], "project": "opal",
+                                                 "harness": "claude-code", "metrics": {"tool_calls": 9, "seconds_to_pr": 51.0}})
+    await sink.flush()
+    assert slug == "procedures/add-onboarding-checklist-to-landing"
+    fm, body = parse_front(mcp.pages[slug])
+    assert fm["type"] == "procedure" and fm["source"] == "memorable" and fm["steps"] == 3
+    assert "npm run build" in body and "tool_calls: 9" in body
+    sig = next(s for s in mcp.pages if s.startswith("feature-requests/"))
+    assert {(slug, "people/matthew", "learned_from"), (slug, sig, "learned_from"), (slug, "projects/opal", "about"),
+            (slug, "events/yc-hackathon-2026-09-27", "learned_at")} <= mcp.links
+    assert not any(l[1] == "people/stephen" for l in mcp.links if l[0] == slug)  # the wearer is not an origin
+    assert "learned a procedure" in mcp.timeline["relationships/stephen-matthew"][-1]["summary"]
+
+    await sink.procedure_recalled(DRAFT, {"event_id": "evt_2", "people": ["matthew"], "feature": "signup checklist"})
+    await sink.flush()
+    assert mcp.timeline[slug][-1]["summary"] == "Recalled for: signup checklist"

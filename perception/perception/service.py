@@ -74,7 +74,7 @@ class WorldService:
         self.gbrain = self._make_gbrain(StubGBrainSink(self.s.events_log_path, people_meta=self._people_meta))
         self.qm = QMSink(self.s.qm_url)
         self.hud = HudSink(self.hub.broadcast, gbrain=self.gbrain)
-        self.builder = Builder(BuilderConfig.from_env(), self.hub.broadcast, anchor=self._track_for)
+        self.builder = Builder(BuilderConfig.from_env(), self.hub.broadcast, anchor=self._track_for, on_procedure=self.on_procedure)
         self.fanout = FanOut([self.gbrain, self.qm, self.hud, BuilderSink(self.builder)])
         self.devfeed = DevFeed(self.builder, self.hub.broadcast)  # dev cockpit: dev_github / dev_session HUD
         self.conv = ConversationManager(self.s.conv_gap_s, self.s.leave_grace_s)
@@ -94,6 +94,14 @@ class WorldService:
         self.frames_in = 0
         self.frames_done = 0
         self.events_out = 0
+
+    async def on_procedure(self, kind: str, doc: dict[str, Any], origin: dict[str, Any]) -> str | None:
+        """Memorable -> GBrain: a learned procedure becomes a GBrain page linked to the moment it came from."""
+        fn = getattr(self.gbrain, "remember_procedure" if kind == "learned" else "procedure_recalled", None)
+        slug = await fn(doc, origin) if fn else None
+        if slug and kind == "learned":
+            await self.hub.broadcast({"kind": "memory_event", "text": "PROCEDURE LEARNED", "detail": f"{doc.get('title')} · saved to GBrain"})
+        return slug
 
     def _make_gbrain(self, stub: StubGBrainSink):
         from .gbrain_auth import configured
@@ -316,6 +324,15 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     app = FastAPI(title="WORLD world service", lifespan=lifespan)
     app.state.svc = svc
     add_builder_routes(app, svc.builder)
+
+    @app.post("/procedures")
+    async def post_procedure(body: dict[str, Any]):
+        """Any harness (QM swarm, cloud routine) reports an admitted Memorable draft: {kind?, draft, origin}."""
+        draft = body.get("draft") or {}
+        if not draft.get("title"):
+            raise HTTPException(422, "draft.title required")
+        slug = await svc.on_procedure(body.get("kind") or "learned", draft, body.get("origin") or {})
+        return {"ok": True, "slug": slug}
 
     @app.websocket("/ws/quest")
     async def ws_quest(ws: WebSocket):
