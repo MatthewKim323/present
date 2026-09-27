@@ -198,11 +198,12 @@ class WorldService:
                 log.exception("transcription failed")
                 continue
             finally:
+                dur = seg.duration_s
                 seg.audio = None  # drop raw audio
             self.asr_lat.add((time.perf_counter() - t0) * 1000)
             if text and any(c.isalnum() for c in text):
                 log.info("ASR (%.0fms, %.1fdB): %s", (time.perf_counter() - t0) * 1000, seg.rms_db, text)
-                await self.add_utterance(Utterance(time.time(), text, seg.rms_db))
+                await self.add_utterance(Utterance(time.time(), text, seg.rms_db, duration_s=dur))
 
     async def add_utterance(self, u: Utterance, partner: tuple[str | None, str | None] | None = None) -> None:
         """partner=(person_id, name) overrides the person in frame (debug injection without a camera)."""

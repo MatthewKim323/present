@@ -12,6 +12,7 @@ class Utterance:
     text: str
     rms_db: float = -30.0
     speaker: str | None = None  # explicit speaker when known (debug injection), else inferred downstream
+    duration_s: float = 0.0  # speech length; ts is when it ended
 
 
 @dataclass
@@ -66,7 +67,8 @@ class ConversationManager:
             closed.append(self._close())
             cur = None
         if cur is None:
-            cur = self.current = Encounter(str(ULID()), person_id, name, track_id, u.ts, u.ts, person_last_seen=u.ts)
+            start = u.ts - u.duration_s
+            cur = self.current = Encounter(str(ULID()), person_id, name, track_id, start, u.ts, person_last_seen=u.ts)
         elif cur.name is None and name is not None:
             cur.person_id, cur.name, cur.track_id = person_id, name, track_id  # partner identified mid-conversation
         cur.utterances.append(u)

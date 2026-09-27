@@ -42,7 +42,7 @@ class Settings:
     asr_backend: str = field(default_factory=lambda: _env("WORLD_ASR", "faster-whisper"))  # faster-whisper | none
     asr_model: str = field(default_factory=lambda: _env("WORLD_ASR_MODEL", "base.en"))
     conv_gap_s: float = field(default_factory=lambda: _envf("WORLD_CONV_GAP", 10.0))
-    leave_grace_s: float = field(default_factory=lambda: _envf("WORLD_LEAVE_GRACE", 4.0))
+    leave_grace_s: float = field(default_factory=lambda: _envf("WORLD_LEAVE_GRACE", 8.0))
 
     # Extraction
     anthropic_model: str = field(default_factory=lambda: _env("WORLD_LLM_MODEL", "claude-sonnet-5"))
