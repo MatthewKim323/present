@@ -13,4 +13,4 @@ Everything WORLD remembers is from Stephen's point of view.
 
 ## About
 
-- TODO(stephen): anything Stephen wants on his own page
+- UC Berkeley EECS, 9x hackathon winner, builds AI agents and ships fast

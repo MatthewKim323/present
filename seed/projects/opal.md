@@ -11,4 +11,4 @@ Opal is Stephen's startup (github.com/qtzx06/opal). Customer feedback, feature r
 by WORLD link here.
 
 - Owner: [[people/stephen]]
-- TODO(stephen): one-line product description
+- Discord-native AI agent: text chat, voice agent, browser/computer-use commands, persistent memory (per repo README)

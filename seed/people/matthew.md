@@ -1,9 +1,9 @@
 ---
 type: "person"
 title: "Matthew"
-subtitle: "TODO(matt): one-line card subtitle, e.g. role · company"
-role: "TODO(matt): role"
-company: "TODO(matt): company"
+subtitle: "builder · Kali Labs"
+role: "builder"
+company: "Kali Labs"
 relationship: "Opal customer, talks with Stephen in person"
 seed: "world-demo"
 ---
@@ -15,8 +15,8 @@ Enrolled (opt-in) for local face recognition on Stephen's headset.
 
 ## About
 
-- TODO(matt): what Matthew does and what he uses Opal for
-- TODO(matt): how long he has been a user, team size
+- Founder-engineer at Kali Labs: AI systems, agents, infra
+- Early Opal user and hackathon co-builder with Stephen (YC events, 2026)
 
 ## Notes
 
