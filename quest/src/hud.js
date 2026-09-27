@@ -43,6 +43,10 @@ export class HudState {
       case 'track':
         this._track(msg.track_id, msg.bbox, msg.label);
         return;
+      case 'tracks': // perception service debug stream (/ws/quest?debug=1): pixel bboxes + frame size
+        if (msg.w && msg.h) this.frameSize = [msg.w, msg.h];
+        for (const t of msg.tracks || []) this._track(t.track_id, t.bbox, t.label);
+        return;
       case 'clear':
         this.cards.clear(); this.activity.clear(); this.toasts = [];
         break;

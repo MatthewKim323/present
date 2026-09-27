@@ -93,6 +93,7 @@ async function bootCapture() {
   // Must happen synchronously in the click, before any await, or it stays suspended.
   if (!audioCtx && config.audio) { audioCtx = new AudioContext(); audioCtx.resume().catch(() => {}); }
   try {
+    if (!config.video) throw new Error('video disabled (?video=0)');
     await startCapture();
     const best = pickCamera(await listCameras(), config.camHint);
     if (best && best.label && best.label !== camLabel) await startCapture(best.deviceId);
@@ -105,7 +106,7 @@ async function bootCapture() {
 // ---- modes -----------------------------------------------------------------
 
 $('btn-desktop').onclick = async () => {
-  if (!grabber) await bootCapture();
+  if (!grabber && !mic) await bootCapture();
   if (!desktop) desktop = new DesktopHud({ canvas: $('overlay'), video, hud, onPinch: pinch });
   desktop.start();
   $('ui').classList.add('min');
@@ -118,7 +119,7 @@ $('btn-desktop').onclick = async () => {
 $('btn-start').onclick = () => bootCapture();
 
 $('btn-ar').onclick = async () => {
-  if (!grabber) bootCapture();
+  if (!grabber && !mic) bootCapture();
   try {
     desktop && desktop.stop();
     xr = new XrHud({ hud, config, onPinch: pinch, statusLine });
@@ -142,7 +143,13 @@ $('btn-label').onclick = () => {
   log(`-> ${JSON.stringify(msg)}`);
 };
 
-XrHud.supported().then((ok) => {
+// ?emulate=1: Meta's IWER polyfills navigator.xr as a Quest 3, so the XR path can
+// be exercised in a desktop browser (no passthrough, but layout + pinch logic run).
+const emulated = config.emulate
+  ? import('iwer').then(({ XRDevice, metaQuest3 }) => { new XRDevice(metaQuest3).installRuntime({ forceInstall: true }); log('iwer: emulating Quest 3'); })
+  : Promise.resolve();
+
+emulated.then(() => XrHud.supported()).then((ok) => {
   $('btn-ar').disabled = !ok;
   if (!ok) $('btn-ar').title = 'immersive-ar not available in this browser';
 });

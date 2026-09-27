@@ -58,9 +58,11 @@ export class XrHud {
       const p = pose.transform.position, o = pose.transform.orientation;
       this.headPose = [p.x, p.y, p.z, o.x, o.y, o.z, o.w];
     }
-    const cam = this.renderer.xr.getCamera();
-    const head = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
-    const headQ = new THREE.Quaternion().setFromRotationMatrix(cam.matrixWorld);
+    // Head from the viewer pose directly (the three xr camera updates inside render()).
+    const hm = pose ? new THREE.Matrix4().fromArray(pose.transform.matrix) : this.renderer.xr.getCamera().matrixWorld;
+    const head = new THREE.Vector3().setFromMatrixPosition(hm);
+    const headQ = new THREE.Quaternion().setFromRotationMatrix(hm);
+    this._head = head; this._headQ = headQ;
     const seen = new Set();
     const hud = this.hud;
     let freeIdx = 0;
@@ -127,7 +129,7 @@ export class XrHud {
       } else if (m.target) {
         if (!m.placed) { m.mesh.position.copy(m.target); m.placed = true; }
         else m.mesh.position.lerp(m.target, 0.15);
-        m.mesh.lookAt(head);
+        m.mesh.lookAt(head); // Object3D.lookAt points +z at the target: plane front faces the viewer
       }
     }
     this.renderer.render(this.scene, this.camera);
@@ -192,10 +194,8 @@ export class XrHud {
     for (const [id] of this.hud.tracks) {
       const b = this.hud.bboxFor(id);
       if (!b) continue;
-      const cam = this.renderer.xr.getCamera();
-      const head = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
-      const headQ = new THREE.Quaternion().setFromRotationMatrix(cam.matrixWorld);
-      const p = this._rayPoint(head, headQ, b[0] + b[2] / 2, b[1] + b[3] / 2, 2);
+      if (!this._head) break;
+      const p = this._rayPoint(this._head, this._headQ, b[0] + b[2] / 2, b[1] + b[3] / 2, 2);
       const ang = dir.angleTo(p.sub(origin).normalize());
       if (ang < bestAng) { bestAng = ang; best = id; }
     }
