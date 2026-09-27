@@ -150,6 +150,9 @@ class FasterWhisperTranscriber:
 
     def transcribe(self, seg: Segment) -> str:
         audio = resample(seg.audio, seg.sample_rate, 16000)
+        peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+        if 0 < peak < 0.5:  # far voices arrive faint at the wearer's mic: normalize so whisper hears them
+            audio = (audio * (0.9 / peak)).astype(np.float32)
         segments, _ = self.model.transcribe(audio, language="en", beam_size=1, vad_filter=False, condition_on_previous_text=False)
         return " ".join(s.text.strip() for s in segments).strip()
 
