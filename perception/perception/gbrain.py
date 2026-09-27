@@ -3,7 +3,7 @@
 Page layout (all human-readable markdown, user-owned):
 
   people/<id>                          person page (human-curated, only created if missing, never overwritten)
-  relationships/<wearer>--<id>         WORLD-owned running page: summary, what we know, recent, open loops
+  relationships/<wearer>-<id>             WORLD-owned running page: summary, what we know, recent, open loops
   events/<situation>                   where the wearer is right now (YC hackathon, SF, date)
   projects/<slug>                      product/project pages (created if missing)
   feedback/ commitments/ decisions/ feature-requests/ bugs/ <date>-<slug>   one page per extracted signal
@@ -354,6 +354,7 @@ class RelState:
             "summary": self.summary, "last_topic": self.last_topic, "sentiment": self.sentiment,
             "last_seen": self.last_seen, "last_seen_where": self.last_seen_where,
             "encounters": self.encounters or None, "reset_at": self.reset_at,
+            "recent_deltas": self.deltas[-5:] or None,
         }
         loops = [f"you owe: {x}" for x in self.you_owe] + [f"owes you: {x}" for x in self.owes_you]
         body = (
@@ -388,6 +389,8 @@ class RelState:
         st.last_seen = _clean(fm.get("last_seen"))
         st.last_seen_where = _clean(fm.get("last_seen_where"))
         st.reset_at = _clean(fm.get("reset_at"))
+        rd = fm.get("recent_deltas")
+        st.deltas = [str(x) for x in rd if _clean(x)] if isinstance(rd, list) else []
         try:
             st.encounters = int(fm.get("encounters") or 0)
         except (TypeError, ValueError):
@@ -537,7 +540,7 @@ class GBrainIOSink:
         return fallback or meta.get("name") or pid.replace("-", " ").title()
 
     def rel_slug(self, pid: str) -> str:
-        return f"relationships/{self.wearer_id}--{pid}"
+        return f"relationships/{self.wearer_id}-{pid}"
 
     def _person_stub_page(self, pid: str, name: str) -> str:
         return _page({"type": "person", "title": name, "created_by": "world"},
@@ -581,7 +584,7 @@ class GBrainIOSink:
                     loaded.add_loop("you_owe", x)
                 for x in local.owes_you:
                     loaded.add_loop("owes_you", x)
-                loaded.deltas = local.deltas
+                loaded.deltas = list(dict.fromkeys([*loaded.deltas, *local.deltas]))[-20:]
                 loaded.last_topic = local.last_topic or loaded.last_topic
                 loaded.summary = local.summary or loaded.summary
                 if local.last_seen:

@@ -84,14 +84,14 @@ async def test_encounter_creates_pages_links_timeline_and_debounces():
     sink, mcp = make_sink()
     await sink.emit(enc_event())
     await sink.flush()
-    assert {"people/matthew", "relationships/stephen--matthew", "events/yc-hackathon-2026-09-27"} <= set(mcp.pages)
+    assert {"people/matthew", "relationships/stephen-matthew", "events/yc-hackathon-2026-09-27"} <= set(mcp.pages)
     assert mcp.timeline["people/matthew"][0]["summary"] == "Seen by Stephen at YC hackathon, San Francisco"
     assert mcp.timeline["people/matthew"][0]["source"] == "events/yc-hackathon-2026-09-27"
     assert ("people/matthew", "events/yc-hackathon-2026-09-27", "seen_at") in mcp.links
     await sink.emit(enc_event())  # within 10 min: no second timeline entry
     await sink.flush()
     assert len(mcp.timeline["people/matthew"]) == 1
-    fm, _ = parse_front(mcp.pages["relationships/stephen--matthew"])
+    fm, _ = parse_front(mcp.pages["relationships/stephen-matthew"])
     assert fm["encounters"] == 1 and fm["last_seen_where"] == "YC hackathon, San Francisco"
 
 
@@ -113,7 +113,7 @@ async def test_conversation_summary_goes_to_timelines_not_transcript():
     await sink.emit(ev)
     await sink.flush()
     assert mcp.timeline["people/matthew"][0]["summary"] == "Talked with Stephen: Canvas onboarding pain"
-    assert mcp.timeline["relationships/stephen--matthew"][0]["summary"].endswith("Canvas onboarding pain")
+    assert mcp.timeline["relationships/stephen-matthew"][0]["summary"].endswith("Canvas onboarding pain")
     assert "people/stephen" not in mcp.timeline  # wearer is not a counterpart
     ctx = await sink.person_context("matthew")
     assert ctx["last"] == "Canvas onboarding pain"
@@ -144,7 +144,7 @@ async def test_signals_become_pages_with_links_and_open_loops():
     assert ctx["you_owe"] == "Send updated onboarding demo"
     assert ctx["owes_you"] == "Intro to his CTO"
     assert ctx["here"] == "YC hackathon, San Francisco"
-    rel = mcp.pages["relationships/stephen--matthew"]
+    rel = mcp.pages["relationships/stephen-matthew"]
     assert "- you owe: Send updated onboarding demo" in rel and "- owes you: Intro to his CTO" in rel
 
 
@@ -164,9 +164,9 @@ async def test_relationship_deltas_persist_and_hit_hud():
     await sink.flush()
     assert [m["text"] for m in sent] == ["+ prefers async demos", "+ canvas setup"]
     assert all(m["kind"] == "context_delta" and m["person_id"] == "matthew" for m in sent)
-    rel = mcp.pages["relationships/stephen--matthew"]
+    rel = mcp.pages["relationships/stephen-matthew"]
     assert "- prefers async demos" in rel and "early Syla user" in rel
-    assert mcp.timeline["relationships/stephen--matthew"][0]["summary"].startswith("Learned: prefers async demos")
+    assert mcp.timeline["relationships/stephen-matthew"][0]["summary"].startswith("Learned: prefers async demos")
     ctx = await sink.person_context("matthew")
     assert ctx["recent_deltas"] == ["canvas setup", "prefers async demos"]
     assert ctx["relationship"] == "early Syla user, wants easier setup"
@@ -180,7 +180,7 @@ async def test_second_encounter_card_is_richer_from_hydrated_page():
     mcp = FakeMCP()
     old = RelState("matthew", "Matthew", summary="met at demo day", facts=["runs a 4 person team"], you_owe=["send demo"],
                    last_seen="2026-09-20 10:00", last_seen_where="Demo day, SF", encounters=1)
-    mcp.pages["relationships/stephen--matthew"] = old.page("Stephen", SIT)
+    mcp.pages["relationships/stephen-matthew"] = old.page("Stephen", SIT)
     sink, _ = make_sink(mcp)
     await sink.emit(enc_event())
     ctx = await sink.person_context("matthew")
@@ -188,7 +188,7 @@ async def test_second_encounter_card_is_richer_from_hydrated_page():
     assert ctx["seen_before"]["when"] == "2026-09-20 10:00" and ctx["seen_before"]["where"] == "Demo day, SF"
     assert ctx["seen_before"]["ago"].endswith("d ago")
     assert ctx["you_owe"] == "send demo" and ctx["relationship"] == "met at demo day"
-    fm, body = parse_front(mcp.pages["relationships/stephen--matthew"])
+    fm, body = parse_front(mcp.pages["relationships/stephen-matthew"])
     assert fm["encounters"] == 2 and "- runs a 4 person team" in body
 
 
@@ -364,8 +364,8 @@ def test_seed_files_load_and_reset_stamp():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     seeds = mod.load_seeds()
-    assert {"people/matthew", "people/stephen", "relationships/stephen--matthew", "projects/syla", "events/yc-hackathon-2026-09-27"} <= set(seeds)
-    stamped = mod.stamp_reset(seeds["relationships/stephen--matthew"], "2026-09-27T20:00:00Z")
+    assert {"people/matthew", "people/stephen", "relationships/stephen-matthew", "projects/syla", "events/yc-hackathon-2026-09-27"} <= set(seeds)
+    stamped = mod.stamp_reset(seeds["relationships/stephen-matthew"], "2026-09-27T20:00:00Z")
     fm, body = parse_front(stamped)
     assert fm["reset_at"] == "2026-09-27T20:00:00Z" and "## Open loops" in body
     st = RelState.from_page("matthew", "Matthew", {"frontmatter": fm, "compiled_truth": body})

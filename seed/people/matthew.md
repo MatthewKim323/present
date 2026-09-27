@@ -21,4 +21,4 @@ Enrolled (opt-in) for local face recognition on Stephen's headset.
 ## Notes
 
 Fields starting with TODO are placeholders and never show on the HUD.
-Live learnings go to [[relationships/stephen--matthew]], not here.
+Live learnings go to [[relationships/stephen-matthew]], not here.
