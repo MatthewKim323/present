@@ -178,9 +178,10 @@ def test_spec_and_prompt():
     b = Builder(BuilderConfig(), lambda m: None, runner=FakeRunner(), github=FakeGitHub(), procedures=FakeMemory())
     from perception.builder import Job
     job = Job(id="x", event_id=None, spec=normalize_spec(SPEC), repo="qtzx06/opal", branch="world/x", mode="local")
-    p = build_prompt(job, "app")
+    p = build_prompt(job, "discord-bot", "python3 -m compileall -q core utils")
     assert '--title "[WORLD] Add How it works section under hero"' in p and "world/x" in p
-    assert p.rstrip().endswith("until it exits 0.") and "cd app && npm run build" in p and "LazyMotion" in p
+    assert p.rstrip().endswith("until it exits 0.") and "cd discord-bot && python3 -m compileall -q core utils" in p
+    assert "@bot.command" in p and "`discord-bot/`" in p
     assert "never `git add -A`" in p
     assert b.runner.name == "local"
 

@@ -1,8 +1,8 @@
 """Scripted demo events, no cameras needed. Stephen (Opal founder) wears the Quest; Matthew is the customer.
 
   uv run python -m perception.demo_inject                  # Matthew gives Opal feedback + Stephen commits to a follow-up
-  uv run python -m perception.demo_inject --feature        # Matthew asks for a "How it works" section on the Opal landing page
-  uv run python -m perception.demo_inject --customer2      # second, similar landing page request ("How payouts work"), Memorable recall run 2
+  uv run python -m perception.demo_inject --feature        # Matthew asks for a `!recap` command in the Opal Discord bot
+  uv run python -m perception.demo_inject --customer2      # second, similar bot command (`!streak`), Memorable recall run 2
   uv run python -m perception.demo_inject --via-llm        # inject utterances + end conversation, exercises Claude extraction
   uv run python -m perception.demo_inject --feature --via-llm   # same, through Claude
   run the service with WORLD_WEARER_ID=stephen WORLD_WEARER_NAME=Stephen
@@ -38,80 +38,80 @@ def completed(summary: str, duration_s: float = 40.0) -> dict:
 
 
 def feedback_events() -> list[dict]:
-    """Default: Matthew tells Stephen what's confusing about Opal, Stephen commits to a follow-up."""
+    """Default: Matthew tells Stephen what bugs him about the Opal Discord bot, Stephen commits to a follow-up."""
     return [
         encountered(),
-        make_event("customer_feedback.detected", {"product": "Opal", "feature": "Landing page", "sentiment": "mixed",
-                                                  "feedback": "Landing page sells the data engine but never says how a player actually gets paid",
-                                                  "buying_signal": "Would get his friends on the Discord bot if the payout flow were clear"},
+        make_event("customer_feedback.detected", {"product": "Opal", "feature": "Discord bot memory", "sentiment": "mixed",
+                                                  "feedback": "Opal remembers stuff mid-session, but he can't see what it knows about him",
+                                                  "buying_signal": "Would get his squad on the Discord bot if it felt like it knew them"},
                    source=SRC, confidence=0.92, people=PEOPLE, project=PROJECT),
         make_event("commitment.detected", {"actor": "Stephen", "recipient": "Matthew",
-                                           "commitment": "Send Matthew the Opal Discord invite and a walkthrough of payouts"},
+                                           "commitment": "Send Matthew the Opal Discord invite for his squad"},
                    source=SRC, confidence=0.93, people=PEOPLE, project=PROJECT),
-        completed("Matthew liked Opal but couldn't tell from the landing page how players get paid; "
-                  "Stephen will send the Discord invite and a payouts walkthrough.", 42.0),
+        completed("Matthew likes playing with Opal but wants to see what it remembers about him; "
+                  "Stephen will send the Discord invite for his squad.", 42.0),
     ]
 
 
 FEATURE_REQUEST = {
     "product": "Opal",
-    "feature": "Add How it works section under hero",
-    "request": "Show three steps under the hero: play, Opal labels your gameplay, get paid",
+    "feature": "Add !recap command",
+    "request": "A !recap command in the Discord bot that shows what Opal remembers about you from past sessions, in Opal's voice",
     "requested_by": "Matthew",
-    "acceptance": ["Section directly below the hero", "Three numbered steps"],
+    "acceptance": ["`!recap` replies in the channel", "Uses the bot's existing memory, in Opal's persona"],
 }
 
 FEATURE_REQUEST_2 = {
     "product": "Opal",
-    "feature": "Add How payouts work section above the final CTA",
-    "request": "Explain payouts in three short points above the final call to action: you play, your gameplay gets labeled, you get paid in SOL or USDC",
+    "feature": "Add !streak command",
+    "request": "A !streak command in the Discord bot that shows how many days in a row you've played with Opal",
     "requested_by": "Matthew",
-    "acceptance": ["Section directly above the final CTA", "Mentions SOL and USDC payouts"],
+    "acceptance": ["`!streak` replies in the channel", "Says the streak count in Opal's persona"],
 }
 
 
 def feature_events(spec: dict = FEATURE_REQUEST, summary: str | None = None) -> list[dict]:
-    """Stephen (founder, wearing the Quest) talks to Matthew (customer). Matthew asks for a concrete landing page change."""
+    """Stephen (founder, wearing the Quest) talks to Matthew (customer). Matthew asks for a concrete Discord bot command."""
     return [
         encountered(),
-        make_event("customer_feedback.detected", {"product": "Opal", "feature": "Landing page", "sentiment": "mixed",
-                                                  "feedback": "The hero looks sick but it doesn't say what a player actually does",
-                                                  "buying_signal": "Would share the site with his gaming group chat once it's clear"},
+        make_event("customer_feedback.detected", {"product": "Opal", "feature": "Discord bot memory", "sentiment": "mixed",
+                                                  "feedback": "Opal clearly remembers things, but there's no way to see what it knows about you",
+                                                  "buying_signal": "Would get his whole squad on the bot if it had this"},
                    source=SRC, confidence=0.92, people=PEOPLE, project=PROJECT),
         make_event("feature_request.detected", dict(spec), source=SRC, confidence=0.93, people=PEOPLE, project=PROJECT),
-        completed(summary or "Matthew asked for a How it works section under the Opal hero; Stephen agreed to ship it today.", 38.0),
+        completed(summary or "Matthew asked for a !recap command so he can see what Opal remembers about him; Stephen agreed to ship it today.", 38.0),
     ]
 
 
 def customer2_events() -> list[dict]:
-    """Run 2 for Memorable recall: a similar, not identical, landing page request."""
-    return feature_events(FEATURE_REQUEST_2, "Matthew asked for a How payouts work section above the final CTA; "
+    """Run 2 for Memorable recall: a similar, not identical, bot command request."""
+    return feature_events(FEATURE_REQUEST_2, "Matthew asked for a !streak command showing how many days in a row he's played; "
                                              "Stephen said he'd get it in.")
 
 
 FEEDBACK_LINES = [
-    ("other", "Yo, I was messing with Opal last night. The landing page goes crazy."),
+    ("other", "Yo, I was playing with Opal on Discord last night. It's actually fun."),
     ("wearer", "Appreciate it. Anything feel off?"),
-    ("other", "Honestly I couldn't tell how I actually get paid. It says players aren't seeing a cent, then it's all data engine stuff."),
-    ("other", "If the payout part were clearer I'd get my whole squad on the Discord bot."),
-    ("wearer", "Fair. I'll send you the Discord invite and a quick walkthrough of how payouts work tonight."),
+    ("other", "It clearly remembers stuff about me, but I can't tell what it knows. Kinda spooky."),
+    ("other", "If it felt more like it knew me I'd get my whole squad on it."),
+    ("wearer", "Fair. I'll send you the Discord invite for your squad tonight."),
     ("other", "Bet, thanks."),
 ]
 
 FEATURE_LINES = [
-    ("other", "Yo, I checked out the Opal site. The hero looks sick."),
-    ("wearer", "Appreciate it. Did it make sense what we do?"),
-    ("other", "Kinda? I get it's for AI, but it doesn't say what I actually do as a player."),
-    ("other", "You should put a How it works section right under the hero. Three numbered steps: you play, Opal labels your gameplay, you get paid."),
+    ("other", "Yo, I've been playing with Opal on Discord. It's fire."),
+    ("wearer", "Appreciate it. Anything you wish it did?"),
+    ("other", "It remembers stuff about me but I can never see what. Like what does it actually know?"),
+    ("other", "You should add a bang recap command. I type recap and Opal tells me what it remembers about me, in its own voice."),
     ("wearer", "That's a great call. We can ship that today."),
-    ("other", "Do that and I'm sending it to my whole group chat."),
+    ("other", "Do that and I'm getting my whole squad on it."),
 ]
 
 CUSTOMER2_LINES = [
-    ("other", "Okay the How it works part is way better."),
+    ("other", "Okay recap is sick."),
     ("wearer", "Nice, anything else?"),
-    ("other", "People are gonna ask how payouts work though. Like what do I get paid in?"),
-    ("other", "Add a How payouts work section right above the last call to action. Three short points, and say it's SOL or USDC."),
+    ("other", "My friends are gonna want to flex how much they play though."),
+    ("other", "Add a bang streak command. It says how many days in a row you've played with Opal."),
     ("wearer", "Easy, I'll get that in."),
     ("other", "Perfect."),
 ]
@@ -121,9 +121,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="perception.demo_inject")
     ap.add_argument("--url", default="http://localhost:8787")
     ap.add_argument("--delay", type=float, default=1.5)
-    ap.add_argument("--customer2", action="store_true", help="similar second request (How payouts work), recall run 2")
+    ap.add_argument("--customer2", action="store_true", help="similar second request (!streak command), recall run 2")
     ap.add_argument("--via-llm", action="store_true")
-    ap.add_argument("--feature", action="store_true", help="How it works feature request (Stephen hears Matthew)")
+    ap.add_argument("--feature", action="store_true", help="!recap feature request (Stephen hears Matthew)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     c = httpx.Client(base_url=a.url, timeout=90)
