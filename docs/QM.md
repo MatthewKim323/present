@@ -24,6 +24,8 @@ Routes live in `deploy/worldhooks/world-hooks.json` (pointed at by `WORLD_HOOKS_
 
 ## Verified locally (2026-09-27)
 
+Note: this run used the old Alex/Syla/Canvas story, kept as a record. The current demo is Stephen + Matthew + Opal (`demo_inject.py`, see CLAUDE.md).
+
 curl of a `customer_feedback.detected` event -> `202` -> root turn woke in `personal:matt` -> root called `/v1/swarm` spawn -> 3 worker sessions, each on its own local-docker computer -> workers reported back via swarm messages -> root returned: who (Alex, unresolved beyond the event), draft issue "Simplify Canvas onboarding and initial setup", draft reply to Alex, and "awaiting approval: filing the issue and sending the reply. Nothing was sent externally." Context worker could not resolve Alex because GBrain is not wired into QM yet. Harness was `codex` via `~/.codex/auth.json`; roughly 4 minutes wall clock for the whole swarm.
 
 ## Run it locally

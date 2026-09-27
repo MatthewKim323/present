@@ -36,7 +36,7 @@ Also: upstream gbrain is at **v0.59.0.0** (released 2026-09-26). The Memorable r
 
 | Option | Privacy on stage | Pollution of matt's brain | Memorable-gbrain relay works | Effort |
 |---|---|---|---|---|
-| Use personal brain, namespace (source/slug prefix) | **Bad.** Default source is `federated: true`, so HUD/agent queries can surface real DMs. One wrong query on a projector = private Instagram/Discord on screen | Bad. Alex/Syla/Canvas pages, procedures, test junk land in the real DB | No (0.32.5). Upgrading the global binary to 0.59 also migrates the personal brain and the launchd server mid-hackathon | Low, then high |
+| Use personal brain, namespace (source/slug prefix) | **Bad.** Default source is `federated: true`, so HUD/agent queries can surface real DMs. One wrong query on a projector = private Instagram/Discord on screen | Bad. Demo people/project pages, procedures, test junk land in the real DB | No (0.32.5). Upgrading the global binary to 0.59 also migrates the personal brain and the launchd server mid-hackathon | Low, then high |
 | Hosted gbrain.io | Good | None | U (not documented) | $199, signup, unknown API surface |
 | **Fresh local brain (separate GBRAIN_HOME + separate DB)** | **Good.** Only demo data exists | **None** | Yes if it runs upstream latest | ~10 min |
 
@@ -53,7 +53,7 @@ gbrain honors `GBRAIN_HOME` (config dir becomes `$GBRAIN_HOME/.gbrain`) and `GBR
    bun run src/cli.ts serve --http --port 3232             # NOT 3131
    ```
    PGLite is fine for a demo-sized brain. If we want QM-style Postgres, create a new database in the existing `gbrain-pg` container (`world_demo`) and set `GBRAIN_DATABASE_URL`; never reuse the `gbrain` database.
-2. Seed only demo people (Alex, customer #2), Syla, Canvas onboarding. Everyone in the brain is opted in, which matches our privacy pitch.
+2. Seed only demo people (Stephen, Matthew), the Opal project, the YC hackathon event. Everyone in the brain is opted in, which matches our privacy pitch.
 3. Point WORLD + QM at `:3232`. Keep matt's Claude Code `gbrain` MCP (`:3131`) as is; do not add the demo brain under the same MCP name.
 4. Pitch line stays true: "memory stays human-readable, user-owned", and we can `export` the demo brain to markdown on stage if asked.
 
