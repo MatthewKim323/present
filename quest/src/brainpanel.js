@@ -275,7 +275,7 @@ export class XrBrain {
   frame(head, headQ, meshes, dev) {
     const hud = this.hud, t = now();
     const lines = liveLines(hud, t);
-    const card = [...meshes.entries()].find(([k]) => k.startsWith('card:'))?.[1];
+    const card = [...meshes.entries()].find(([k]) => k.startsWith('card:') || k.startsWith('label:'))?.[1] || meshes.get('detail:person');
     if (!hud.brain || (!lines.length && !card)) { this._drop(); this.link.material.opacity = 0; return; }
     const pulse = hud.brain.pulse;
     const key = `${hud.brain.v}:${animating(lines, pulse, t) ? Math.floor(t / 50) : 's'}`;

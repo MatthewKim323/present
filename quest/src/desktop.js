@@ -1,10 +1,10 @@
-import { deltasAnimating, DesktopDev } from "./devpanels.js";
 import { drawActionPerson as drawPersonCard } from './person-actions.js';
+import { deltasAnimating, DesktopDev } from "./devpanels.js";
 import { DesktopVision } from "./visionfx.js";
-import { DesktopSwarm } from './swarmviz.js';
-import { DesktopBrain } from './brainpanel.js';
-import { DesktopMemory } from './memorypanel.js';
-import { safe, frameBegin, frameEnd } from './perf.js';
+import { DesktopSwarm } from "./swarmviz.js";
+import { DesktopBrain } from "./brainpanel.js";
+import { DesktopMemory } from "./memorypanel.js";
+import { ANIM_HZ, due, safe, frameBegin, frameEnd } from "./perf.js";
 // Desktop is a spatial preview: labels stay beside people; detail is intentional.
 import {
   drawPersonLabel,
@@ -24,7 +24,7 @@ export class DesktopHud {
     this.hits = [];
     this.running = false;
     this.dev = new DesktopDev(hud);
-    this.vfx = new DesktopVision(hud); // perception overlay (visionfx.js)
+    this.vfx = new DesktopVision(hud);
     this.swarm = new DesktopSwarm(hud);
     this.brain = new DesktopBrain(hud);
     this.mem = new DesktopMemory(hud, this.dev);
@@ -72,9 +72,9 @@ export class DesktopHud {
     const loop = () => {
       if (!this.running) return;
       this.frame = requestAnimationFrame(loop);
-      const t0 = frameBegin();
-      safe('desktop draw', () => this.draw());
-      frameEnd(t0);
+      const started = frameBegin();
+      safe("desktop draw", () => this.draw());
+      frameEnd(started);
     };
     this.frame = requestAnimationFrame(loop);
   }
@@ -110,12 +110,12 @@ export class DesktopHud {
   }
 
   _raster(key, msg, fn) {
-    if (fn === drawPersonCard && deltasAnimating(msg)) return fn(msg);
     const cached = this.cache.get(key);
-    if (cached?.msg === msg) return cached.canvas;
+    const animate = fn === drawPersonCard && deltasAnimating(msg);
+    if (cached?.msg === msg && (!animate || !due(cached, ANIM_HZ))) return cached.canvas;
     const canvas = fn(msg);
     if (this.cache.size > 64) this.cache.clear();
-    this.cache.set(key, { msg, canvas });
+    this.cache.set(key, { msg, canvas, _drawT: performance.now() });
     return canvas;
   }
 
@@ -280,22 +280,20 @@ export class DesktopHud {
           top: Math.min(p.y + p.h + 10, area.bottom - 90),
         };
       const detailRect = this._place(detail, x, y, detailArea);
-      if (hud.view === 'person' && selected != null) {
-        const scale = detailRect.w / (detail.width / 2);
-        for (const action of detail.localActions || []) this.hits.push({
-          track: selected, localAction: action.action,
-          x: detailRect.x + action.x * scale, y: detailRect.y + action.y * scale,
-          w: action.w * scale, h: action.h * scale,
-        });
-      }
+      const scale = detailRect.w / (detail.width / 2);
+      for (const hit of detail.localActions || []) this.hits.push({
+        track: selected, localAction: hit.action,
+        x: detailRect.x + hit.x * scale, y: detailRect.y + hit.y * scale,
+        w: hit.w * scale, h: hit.h * scale,
+      });
       if (hud.view === "person" && selected != null) placed.set(selected, detailRect);
     }
 
-    safe('desktop swarm', () => this.swarm.draw(ctx, vr));
-    safe('desktop dev', () => this.dev.draw(ctx, placed, vr));
-    safe('desktop brain', () => this.brain.draw(ctx, placed, vr));
-    safe('desktop memory', () => this.mem.draw(ctx));
-    safe('desktop vision', () => this.vfx.draw(ctx, placed, vr, this.hits));
+    safe("desktop swarm", () => this.swarm.draw(ctx, vr));
+    safe("desktop dev", () => this.dev.draw(ctx, placed, vr));
+    safe("desktop brain", () => this.brain.draw(ctx, placed, vr));
+    safe("desktop memory", () => this.mem.draw(ctx));
+    safe("desktop vision", () => this.vfx.draw(ctx, placed, vr, this.hits));
 
     // One quiet acknowledgement at a time; older events remain in Memories.
     const toast = hud.liveToasts().at(-1);

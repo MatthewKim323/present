@@ -17,14 +17,16 @@ export class Link {
     this.rtt = null;
     this.net = { state: 'closed', since: performance.now(), retryAt: 0, reconnects: 0, everOpen: false };
     this._retry = 500;
-    this.stopped = false;
     this._timer = null;
     this._pongSeen = false;
     this._missed = 0;
+    this.stopped = false;
     this._pingTimer = setInterval(() => this._ping(), PING_MS);
     // back online / tab visible again: don't wait out the backoff
-    globalThis.addEventListener?.('online', () => this._now());
-    globalThis.document?.addEventListener?.('visibilitychange', () => { if (!document.hidden) this._now(); });
+    this._online = () => this._now();
+    this._visible = () => { if (!globalThis.document?.hidden) this._now(); };
+    globalThis.addEventListener?.('online', this._online);
+    globalThis.document?.addEventListener?.('visibilitychange', this._visible);
     this.connect();
   }
 
@@ -57,7 +59,7 @@ export class Link {
   }
 
   _ping() {
-    if (!this.open) return;
+    if (this.stopped || !this.open) return;
     if (this._pongSeen && ++this._missed > 3) { // it answered before and stopped: assume half-open
       this._missed = 0;
       try { this.ws.close(); } catch {}
@@ -67,8 +69,7 @@ export class Link {
   }
 
   _later() {
-    if (this.stopped) return;
-    if (this._timer) return;
+    if (this.stopped || this._timer) return;
     const wait = this._retry * (0.8 + 0.4 * Math.random());
     this.net.retryAt = performance.now() + wait;
     this._timer = setTimeout(() => { this._timer = null; this.net.reconnects++; this.connect(); }, wait);
@@ -90,9 +91,13 @@ export class Link {
   }
 
   close() {
+    if (this.stopped) return;
     this.stopped = true;
     clearTimeout(this._timer);
+    this._timer = null;
     clearInterval(this._pingTimer);
+    globalThis.removeEventListener?.('online', this._online);
+    globalThis.document?.removeEventListener?.('visibilitychange', this._visible);
     this.ws?.close();
     this._set('closed');
   }

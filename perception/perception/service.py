@@ -51,8 +51,8 @@ class Hub:
 
     def __init__(self) -> None:
         self.clients: set[WebSocket] = set()
-        self.taps: list[Any] = []  # sync callables seeing every HUD message (director.py keeps its recent log)
         self._state: dict[str, tuple[float, str]] = {}
+        self.taps: list[Any] = []  # sync callables seeing every HUD message (director.py keeps its recent log)
         self._state_lock = asyncio.Lock()
 
     async def replay(self, ws: WebSocket) -> None:
@@ -73,7 +73,7 @@ class Hub:
         async with self._state_lock:
             if msg.get("kind") == "clear":
                 self._state.clear()
-            elif msg.get("kind") in {"qm_swarm", "dev_github", "preview_shot"}:
+            elif msg.get("kind") in {"dev_github", "dev_session", "preview_shot", "agent_activity", "qm_swarm", "armed_watches"}:
                 self._state[msg["kind"]] = (time.monotonic() + 1800, data)
         dead = []
         for ws in list(self.clients):
@@ -419,8 +419,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
         svc.source = ws.query_params.get("source", "quest3s")
         debug = ws.query_params.get("debug") in ("1", "true")
         await svc.panels.connect(ws, svc.hub.clients, replay=svc.hub.replay)
-        library = svc.procfeed.library_msg()
-        await ws.send_text(json.dumps(library))  # late joiners see the procedure library
+        await ws.send_text(json.dumps(svc.procfeed.library_msg()))  # late joiners see the procedure library
         if debug:
             svc.debug_clients.add(ws)
         if debug or ws.query_params.get("vision") in ("1", "true"):
@@ -446,8 +445,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     async def ws_hud(ws: WebSocket):
         await ws.accept()
         await svc.panels.connect(ws, svc.hub.clients, replay=svc.hub.replay)
-        library = svc.procfeed.library_msg()
-        await ws.send_text(json.dumps(library))
+        await ws.send_text(json.dumps(svc.procfeed.library_msg()))
         try:
             while True:
                 await ws.receive_text()  # HUD clients may send pings; ignored

@@ -121,7 +121,7 @@ export class HudState {
         )
           return;
         if (msg.bbox) this._track(msg.anchor_track_id, msg.bbox, msg.name);
-        this.cards.set(key(msg.anchor_track_id), withDeltas(this, { ...msg, watching: this._watching(msg.person_id), t: now() }));
+        this.cards.set(key(msg.anchor_track_id), withDeltas(this, { ...msg, watching: this._watching(msg.person_id), _actionState: this.personActionState?.get(msg.person_id), t: now() }));
         break;
       case 'armed_watches':
         this.watches = Array.isArray(msg.items) ? msg.items : [];
@@ -172,6 +172,8 @@ export class HudState {
         this.tracks.clear();
         this.toasts = [];
         this.panels.clear();
+        this.workPanels = [];
+        this.workPage = 0;
         this.memoryHistory = [];
         this.selectedTrack = null;
         this.view = "person";

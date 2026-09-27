@@ -867,7 +867,7 @@ export class XrSwarm {
     let P;
     if (b) P = xr._rayPoint(head, headQ, b[0] + b[2] / 2, Math.max(0, b[1] - 0.02), dist);
     else {
-      const card = xr.meshes.get('card:' + (s.anchor ?? 'free')) || [...xr.meshes.entries()].find(([k]) => k.startsWith('card:'))?.[1];
+      const card = xr.meshes.get('card:' + (s.anchor ?? 'free')) || xr.meshes.get('label:' + (s.anchor ?? 'free')) || [...xr.meshes.entries()].find(([k]) => k.startsWith('card:') || k.startsWith('label:'))?.[1];
       P = card?.target ? card.target.clone().add(new THREE.Vector3(0, 0.12, 0)) : xr._local(head, headQ, 0, 0.1, -dist);
     }
     const toP = P.clone().sub(head); toP.y = 0; toP.normalize();

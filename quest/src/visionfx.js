@@ -526,7 +526,7 @@ export class XrVision {
     // radar above the first person card
     for (const [id, msg] of hud.cards) {
       const r = radarFor(hud, msg);
-      const card = (hud.selectedTrack === String(id) && xr.meshes.get('detail:person')) || xr.meshes.get('label:' + id);
+      const card = xr.meshes.get('card:' + id) || xr.meshes.get('label:' + id) || xr.meshes.get('detail:person');
       if (!r || !card) continue;
       seen.add('radar');
       const wm = RADAR_W * M_PER_PX, hm = RADAR_H * M_PER_PX;

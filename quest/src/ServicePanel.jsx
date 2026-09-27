@@ -33,7 +33,7 @@ function Link({ href, children }) {
 function Resource({ title, resource, refresh, children }) {
   return <section className="service-block" aria-label={title}>
     <div className="service-block-heading"><h3>{title}</h3><button onClick={refresh} disabled={resource?.loading}>refresh</button></div>
-    {resource?.loading && <p role="status">loading…</p>}
+    {resource?.loading && resource?.data == null && <p role="status">loading…</p>}
     {resource?.error && <p role="alert" className="service-error">{resource.error}</p>}
     {resource?.data != null && children(resource.data)}
   </section>;
@@ -72,6 +72,12 @@ export function ServicePanel({ onClose, onConnect, target, api: providedApi }) {
   }, [api]);
 
   useEffect(() => {
+    if (!target) return;
+    setTab(target.jobId ? 'builds' : 'qm');
+    if (target.jobId) { setJobId(target.jobId); void read('job', 'job', [target.jobId]); }
+  }, [target, read]);
+
+  useEffect(() => {
     mounted.current = true;
     const controller = new AbortController();
     for (const key of ['health', 'people', 'jobs', 'tools', 'panels']) void read(key, key, [], { signal: controller.signal });
@@ -80,13 +86,22 @@ export function ServicePanel({ onClose, onConnect, target, api: providedApi }) {
   }, [read]);
 
   useEffect(() => {
-    if (!target) return;
-    setTab(target.jobId ? 'builds' : 'qm');
-    if (target.jobId) {
-      setJobId(target.jobId);
-      void read('job', 'job', [target.jobId]);
+    const controller = new AbortController();
+    let timer;
+    async function tick() {
+      if (!document.hidden) {
+        const keys = tab === 'overview' ? ['health', 'people'] : tab === 'builds' ? ['jobs'] : tab === 'tools' ? ['panels'] : [];
+        await Promise.all([
+          ...keys.map(key => read(key, key, [], { signal: controller.signal })),
+          ...(tab === 'builds' && jobId ? [read('job', 'job', [jobId], { signal: controller.signal })] : []),
+          ...(tab === 'tools' ? [read('panelActions', 'panelActions', [Number(after)], { signal: controller.signal })] : []),
+        ]);
+      }
+      if (!controller.signal.aborted) timer = setTimeout(tick, 3000);
     }
-  }, [target, read]);
+    timer = setTimeout(tick, 3000);
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [read, tab, jobId, after]);
 
   async function mutate(label, task) {
     if (mutationLock.current) return;
@@ -122,7 +137,7 @@ export function ServicePanel({ onClose, onConnect, target, api: providedApi }) {
     <div className="service-content">
       {tab === 'qm' && <QmPanel target={target} api={api} onConnect={onConnect} />}
       {tab === 'overview' && <>
-        <p className="service-hint">live backend snapshots. refresh to fetch current state.</p>
+        <p className="service-hint">updates automatically while this view is open.</p>
         {onConnect && <button onClick={onConnect}>connect live HUD</button>}
         <Resource title="health" resource={resources.health} refresh={() => read('health')}>{data => <><Fields values={{ service: data.ok ? 'available' : 'unavailable', vision: data.vision ? 'ready' : 'unavailable', speech: data.asr, reasoning: data.llm ? 'ready' : 'unavailable', GBrain: data.gbrain?.backend ?? data.gbrain?.mode ?? data.gbrain, QM: data.qm_url ? 'configured' : 'not configured', 'HUD clients': data.hud_clients, 'frames processed': data.frames_done, 'events emitted': data.events_out }} /><Raw value={data} label="latency and full health" /></>}</Resource>
         <Resource title="people" resource={resources.people} refresh={() => read('people')}>{data => <>{Object.keys(data).length ? <ul className="service-list">{Object.entries(data).map(([id, person]) => <li key={id}><div><strong>{person.name}</strong><small>{id}</small></div><span>{person.samples} samples</span></li>)}</ul> : <p>no enrolled people.</p>}<p className="service-hint">enroll a visible person from the camera view.</p></>}</Resource>

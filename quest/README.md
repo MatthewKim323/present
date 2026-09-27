@@ -166,6 +166,20 @@ often isolates; use the cable or a phone hotspot).
 `scrcpy --crop 1832:1920:0:0 --max-fps 30` mirrors the left eye to the laptop
 (crop numbers vary by device, drop `--crop` to see both eyes).
 
+## Camera glass and hand pointers
+
+Exit AR and reload after changes. AR preserves Quest's full surrounding
+passthrough. Native panels use the original React Bits bar geometry with a
+nearly clear surface and subtle edge reflections. Quest composites the room
+after WebGL, so sampling a second camera for glass would create a shifted copy.
+The React Bits FluidGlass transmission shader remains available for rendered
+scenes and GPU fixtures, but real-room optical refraction is not available
+through Quest Browser's WebXR passthrough.
+
+Entering AR does not start the camera. In live mode, tap **start camera + mic**
+before **enter AR** to feed perception; in studio/mock mode, AR needs no camera.
+Hand/controller beams work independently of camera capture.
+
 ## Headset diagnostics and performance
 
 - `?diag=1` shows browser capabilities, granted XR features, camera and mic labels, WebSocket status and RTT, GPU limits, and `/health` in the control panel.
@@ -176,20 +190,6 @@ often isolates; use the cable or a phone hotspot).
 - The XR renderer is shared across AR sessions and scene resources are released on exit.
 
 For a desktop benchmark with emulated XR and a throttled CPU, run `node scripts/perf-bench.mjs` from `quest/`. The `--fuzz` option sends malformed HUD messages to check that one bad payload does not stop rendering.
-
-## Camera glass and hand pointers
-
-AR preserves Quest's native surrounding passthrough, including through panels.
-On Quest, the panel interior stays compositor-transparent; a thin physical
-material adds surface reflection and Fresnel edges without sampling a second
-camera image. That avoids the visible registration seam while keeping the full
-room. The React Bits FluidGlass transmission path remains for rendered scenes,
-but real-room optical refraction is not supported by Quest Browser's WebXR
-passthrough.
-
-Entering AR no longer starts a camera just for glass. Live perception still uses
-camera capture through the explicit live-session controls. Hand/controller beams
-work independently of camera capture. Exit AR and reload to apply renderer changes.
 
 ## Known gaps / verify on device
 

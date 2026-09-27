@@ -1,6 +1,6 @@
 # Frontend handoff: Matthew integration
 
-Source baseline: `3b12994`, inspected 2026-09-27. This is a code mapping, not a new live-service or headset verification. Sources: `contracts/EVENTS.md`, `docs/HANDOFF.md`, `CLAUDE.md`, `perception/perception/{service,sinks,gbrain,live,builder,devfeed}.py`, and `quest/src/devpanels.js`.
+Initial source baseline: `3b12994`, inspected 2026-09-27. The first sections record that earlier integration audit; the live frontend wiring update at the end supersedes its older implementation gaps. This document is not a new live-service or headset verification. Sources: `contracts/EVENTS.md`, `docs/HANDOFF.md`, `CLAUDE.md`, `perception/perception/{service,sinks,gbrain,live,builder,devfeed}.py`, and `quest/src/devpanels.js`.
 
 ## Current demo and integration boundary
 
@@ -28,7 +28,7 @@ The incoming commit already includes a canvas dev cockpit, not just backend feed
 
 - **Dev cockpit:** send `{kind:"dev_action",action:"approve"|"comment"|"open_preview",pr,text?}` over `/ws/quest`. Approve actually runs a GitHub review approval; Comment actually posts a comment. Neither merges. Server restricts these two writes to PRs currently listed in its cockpit snapshot and its configured Builder repository. Empty comment uses the server's canned text; desktop can prompt for custom text, XR uses the default. Outcome arrives as a `memory_event`, not a correlated `panel_result`. Open Preview is client-side; the server only logs it.
 - **Generic panel:** send `{kind:"panel_action",panel_id,action_id,request_id}`. A matching receipt records intent only and does **not** post a review, send a message, merge, or run external work. Do not reuse the generic panel's “choice recorded” language as evidence that a dev action succeeded.
-- **Person pinch:** frontend sends `{kind:"gesture",type:"pinch",target_track_id}`. The contract describes entity adoption, but the inspected `service.py` gesture handler currently refreshes the selected tracked person's card; it does not emit `world.entity_adopted`. Treat persistent entity-agent binding as a documented integration goal rather than a verified frontend capability.
+- **Person pinch:** frontend sends `{kind:"gesture",type:"pinch",target_track_id}`. The current `service.py` passes a recognized track to `PinchAdopter`, which emits `world.entity_adopted`. A visible, persistent entity agent still depends on QM accepting and processing that event.
 
 ## Backend facts that affect the interface
 
@@ -45,3 +45,21 @@ The incoming commit already includes a canvas dev cockpit, not just backend feed
 3. Deliver `dev_github` and `dev_session` snapshots: verify replacement, layout, current buttons and preview readiness. Exercise rendering with fixtures; do not post real GitHub writes merely to test wiring.
 4. Preserve the separate generic panel flow: show/update/dismiss, expiry, reconnect replay, pending action, matching receipt, and rejected-action retry.
 5. Fix preview coverage separately: `mock.js` imports `DEV_SCRIPT`, but `main.js` still selects phase cutoffs rather than playing its full timeline. Later cockpit events are truncated. Old Alex/Syla content remains in the preview/sample narrative. Update the production walkthrough to Stephen/Matthew/Opal while keeping explicitly fictional component samples separate.
+
+## Live frontend wiring · 2026-09-27
+
+- Person cards expose explicit `give agent` and `watch feature requests` controls in desktop and XR. They use `person_id`, never a tracking ID; preview mode never submits. Watch scope is feature requests from that person, notification only; richer matching remains in service → QM.
+- `live-work.js` polls jobs, completed QM reports, watches, and entity agents. Agents/memories show minimal real-state cards, with pagination, remove-watch controls, and details navigation. Live swarm progress still comes from `agent_activity`; `/qm/runs` is completed reports only.
+- Procedure comparisons show observed baseline → recalled totals for the same event type and owner. They do not claim identical tasks or causal speedups.
+- Agent-summoned panels retain priority. Context view exposes the PR/session cockpit; agents/memories work cards yield that space. Opening a known PR from a work card selects it in the cockpit. Other links and full details queue until XR exit.
+- PR selection now determines approve/comment/preview targets. Service drawers refresh automatically. Hub reconnect replays latest cockpit snapshots including preview screenshots, with a 30-minute expiry; it does not replay actions.
+- Studio's final chapter plays every remaining event, including PRs and screenshots.
+- Local smoke runtime remains explicitly unconfigured for real recognition/speech/reasoning/GBrain: vision off, NullTranscriber, LLM off, GBrain stub, dev feed and auto-build off. This is visible in service health. Frontend changes do not enable those services or create sponsor activity.
+
+### Connected runtime update
+
+Run `perception/.venv/bin/python scripts/run-connected-local.py` from the repository root. It reads ignored, mode-600 `.env.integrations` on the backend only and reuses the local QM hook secret. Vision models and FasterWhisper are now loaded; Anthropic extraction is enabled. GBrain remains stub; automatic builds and dev feed are still off by default.
+
+Open `http://localhost:5175/?live=1` or use **connect live**, then **start camera + mic**. `?studio=1` is the component gallery.
+
+Verified real Anthropic extraction on a synthetic transcript (6.1 seconds); Memorable admitted a four-step trace of actual health/test/build commands and recalled it locally. The isolated smoke procedure store was temporary. QM has its Memorable provider configured with read/write consent for its local `personal:stephen` scope. This verifies configuration and Builder extraction/recall, not a completed QM swarm or real PR. Screenshot: `docs/live-integrations-proof.png`.

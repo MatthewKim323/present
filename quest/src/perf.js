@@ -167,7 +167,10 @@ export function mountDiag({ link, xrInfo }) {
   box.id = 'diag';
   box.style.cssText = `margin:8px 0 0;padding:8px;border-radius:8px;background:rgba(255,255,255,0.04);font:10px/1.45 ${MONO};` +
     'white-space:pre-wrap;max-height:46vh;overflow:auto;opacity:0.9';
-  document.getElementById('ui').appendChild(box);
+  const parent = document.getElementById('ui') || document.body;
+  parent.appendChild(box);
+  if (parent === document.body)
+    box.style.cssText += 'position:fixed;left:12px;bottom:12px;width:min(440px,calc(100vw - 24px));z-index:30;background:rgba(8,10,14,0.92);color:#e8ecf0;pointer-events:auto';
   const rows = { page: '', xr: 'checking…', gl: '', cams: 'no permission yet (tap 1. Camera + mic)', ws: '', health: '' };
 
   const ua = navigator.userAgent;
@@ -215,8 +218,9 @@ export function mountDiag({ link, xrInfo }) {
     } catch (e) { rows.health = `http     /health failed: ${e.message}`; }
   };
   const render = () => {
-    const n = link.net;
-    rows.ws = `ws       ${link.url}\n         ${n.state}  rtt=${link.rtt != null ? link.rtt.toFixed(0) + 'ms' : (n.state === 'open' ? 'n/a (no pong yet)' : '-')}  reconnects=${n.reconnects}  rx=${link.received}  tx=${link.sent}`;
+    const current = typeof link === 'function' ? link() : link;
+    const n = current?.net || { state: 'closed', reconnects: 0 };
+    rows.ws = `ws       ${current?.url || config.wsUrl}\n         ${n.state}  rtt=${current?.rtt != null ? current.rtt.toFixed(0) + 'ms' : (n.state === 'open' ? 'n/a (no pong yet)' : '-')}  reconnects=${n.reconnects}  rx=${current?.received || 0}  tx=${current?.sent || 0}`;
     const x = xrInfo && xrInfo();
     const xr = x ? `\nsession  features=[${x.features.join(', ')}]\n         fps=${x.frameRate ?? '?'} supported=[${x.rates.join(',')}] blend=${x.blend} fbScale=${x.fbScale}` : '';
     box.textContent = ['DIAG', rows.page, `xr       ${rows.xr}${xr}`, rows.gl, `cams     ${rows.cams}`, rows.ws, rows.health].join('\n');

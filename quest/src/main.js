@@ -1,4 +1,4 @@
-import { setDevSender } from "./devpanels.js";
+import { act as devAct, setDevSender } from "./devpanels.js";
 import { createLiveWork } from './live-work.js';
 import { createWorldApi } from './world-api.js';
 import { personRequest } from './person-actions.js';
@@ -60,9 +60,17 @@ setDevSender(message => {
 });
 
 const worldApi = createWorldApi();
-const liveWork = createLiveWork({ api: worldApi, hud, isLive: () => mode === 'live',
-  onChange: notify, onError: e => log(`backend: ${e.message}`) });
 const personActions = new Set();
+const liveWork = createLiveWork({ api: worldApi, hud, isLive: () => mode === 'live',
+  onChange: snapshot => {
+    if (!snapshot.errors.watches) for (const [id, states] of hud.personActionState || []) {
+      if (states.watch !== 'done' || snapshot.watches.some(w => w.active && w.match?.person_id === id && w.match?.type === 'feature_request.detected')) continue;
+      personActions.delete(`${id}:watch`);
+      const card = [...hud.cards.values()].find(c => c.person_id === id);
+      if (card) markPersonAction(card, 'watch', null);
+    }
+    notify();
+  }, onError: e => log(`backend: ${e.message}`) });
 let pendingDetail = null;
 function showDetail(target) {
   if (xr?.session) {
@@ -90,6 +98,7 @@ async function personAction(track, action) {
     const body = personRequest(card, action);
     personActions.add(key);
     markPersonAction(card, action, 'pending');
+    hud.apply({ kind: 'memory_event', text: action === 'adopt' ? 'creating agent' : 'creating watch', detail: card.name });
     notify();
     await (action === 'adopt' ? worldApi.qmAdopt(body) : worldApi.qmWatch(body));
     markPersonAction(card, action, 'done');
@@ -121,7 +130,6 @@ function ensureLink() {
     },
   });
   hud.net = link.net;
-  if (config.diag && !document.getElementById('diag')) mountDiag({ link, xrInfo: () => (xr || lastXr)?.info() });
 }
 function pinch(track) {
   if (mode === "preview") return;
@@ -179,7 +187,7 @@ function phase(next) {
   hud.apply({ kind: "clear" });
   for (const [time, message] of DEMO_SCRIPT) {
     if (message.kind === "track") continue;
-    if (time <= [800, 5200, 11000][next]) hud.apply(mockResolve(message));
+    if (time <= [800, 5200, 6000][next]) hud.apply(mockResolve(message));
   }
   hud.selectedTrack = "3";
   hud.setView(["person", "memories", "agents"][next]);
@@ -190,8 +198,8 @@ function phase(next) {
     label: "Matthew · simulated",
   });
   if (next === 2) {
-    for (const [time, message] of DEMO_SCRIPT.filter(([time, msg]) => time > 11000 && msg.kind !== 'track'))
-      phaseTimers.push(setTimeout(() => { hud.apply(mockResolve(message)); notify(); }, time - 11000));
+    for (const [time, message] of DEMO_SCRIPT.filter(([time, msg]) => time > 6000 && msg.kind !== 'track'))
+      phaseTimers.push(setTimeout(() => { hud.apply(mockResolve(message)); notify(); }, time - 6000));
   }
   notify();
 }
@@ -203,6 +211,7 @@ async function preview() {
   studio = false;
   link?.close();
   link = null;
+  hud.net = null;
   error = "";
   setMode("preview");
   phase(0);
@@ -360,20 +369,21 @@ async function endSession() {
   desktop?.stop();
   link?.close();
   link = null;
+  hud.net = null;
   hud.apply({ kind: "clear" });
   studio = false;
   error = "";
   setMode("idle");
 }
 function panelDismiss(id) {
-  if (id === 'live:navigation') return;
-  if (id.startsWith('live:')) { liveWork.dismiss(id); notify(); return; }
+  if (id === 'live:navigation' && !hud.panels.has(id)) return;
+  if (id.startsWith('live:') && !hud.panels.has(id)) { liveWork.dismiss(id); notify(); return; }
   hud.apply({ kind: "panel", op: "dismiss", id });
   if (mode !== "preview") link?.send({ kind: "panel_dismiss", panel_id: id });
   notify();
 }
 function panelAction(id, actionId) {
-  if (id.startsWith('live:')) {
+  if (id.startsWith('live:') && !hud.panels.has(id)) {
     if (id === 'live:navigation') {
       const cards = (hud.workPanels || []).filter(panel => panel.view === hud.view);
       const slots = Math.max(1, 3 - hud.livePanels().length - 1);
@@ -383,8 +393,9 @@ function panelAction(id, actionId) {
     }
     void liveWork.action(id, actionId).then(target => {
       if (target?.url) {
-        if (xr?.session) showDetail({ jobId: target.jobId });
-        else window.open(target.url, '_blank', 'noopener,noreferrer');
+        const pr = hud.devGithub?.prs?.find(pr => pr.url === target.url);
+        if (pr) { devAct(hud, { action: 'select_pr', pr: pr.number }); hud.setView('person'); }
+        else devAct(hud, { action: 'open_link', url: target.url });
       }
       else if (target?.id === 'details') showDetail(target);
       notify();
@@ -557,6 +568,7 @@ const api = {
 };
 mountShell(api);
 mountDesktopOverlays(hud);
+if (config.diag) mountDiag({ link: () => link, xrInfo: () => (xr || lastXr)?.info() });
 addEventListener('error', (e) => log(`error: ${e.message} (${String(e.filename || '').split('/').pop()}:${e.lineno})`));
 addEventListener('unhandledrejection', (e) => log(`unhandled: ${e.reason?.message || e.reason}`));
 setInterval(notify, 350);
@@ -573,7 +585,8 @@ emulated
     notify();
   })
   .catch((e) => log(e.message));
-if (new URLSearchParams(location.search).get("studio") === "1") openStudio();
+if (new URLSearchParams(location.search).get("live") === "1") connectAgent();
+else if (new URLSearchParams(location.search).get("studio") === "1") openStudio();
 else if (config.mock) preview();
 window.addEventListener("pagehide", () => {
   stopPreview();

@@ -206,7 +206,8 @@ def test_service_wiring(tmp_path):
         svc.vision.tracker.tracks[7] = tr
         svc.vision._encounter_event = lambda t: {"payload": {"track_id": t.track_id, "person_id": t.person_id, "label": t.label}}
         with c.websocket_connect("/ws/quest") as q:
-            q.receive_json()
+            assert q.receive_json()["kind"] == "armed_watches"
+            assert q.receive_json()["kind"] == "procedure_library"
             q.send_json({"kind": "gesture", "type": "pinch", "target_track_id": 7})
             assert q.receive_json() == {"kind": "memory_event", "text": "AGENT ASSIGNED", "detail": "MATTHEW"}
             card = q.receive_json()

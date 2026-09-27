@@ -8,16 +8,16 @@ Open `?studio=1` for the interactive library or `?mock=1` for the fictional enco
 
 ## Actual React Bits source
 
-Native AR now uses **FluidGlass**, replacing the specular-border and custom camera-glass material path:
+Native AR uses the React Bits FluidGlass bar geometry. Quest passthrough panels use a nearly clear physical surface because the compositor's room pixels cannot be sampled by WebGL:
 
 - Official React Bits source: https://reactbits.dev/r/FluidGlass-JS-CSS
 - Actual original `bar.glb`: `quest/public/fluidglass/bar.glb`, downloaded from https://reactbits.dev/assets/3d/bar.glb and resized into physical panel slabs.
 - Actual Drei `MeshTransmissionMaterialImpl`, with its GLSL preserved byte-for-byte. Pinned upstream source, SHA256, license and the React Bits reference component live under `quest/src/components/vendor/fluid-glass/`.
-- `fluid-glass-pass.js` translates FluidGlass's `useFBO` / portal render into the existing native Three renderer. It renders a separate scene buffer for each eye and binds the matching texture when drawing that eye. Text stays a sharp overlay.
+- `fluid-glass-pass.js` retains the FluidGlass per-eye render path for rendered scenes and GPU fixtures. Quest AR selects `passthrough-glass-material.js`, leaving compositor passthrough visible through each panel. Text stays a sharp overlay.
 - FluidGlass settings retain ior 1.15 and anisotropic blur .01, with thickness scaled to meter-sized panels and chromatic aberration zero for monochrome styling.
 - A separate documented coverage adapter preserves transparent buffer regions. Upstream transmission discards texture alpha; without this adapter an empty AR scene would produce an opaque slab. RoomEnvironment supplies neutral reflection lighting, not a simulated camera background.
 
-Camera feed: complete raw per-eye textures take priority. Otherwise the local getUserMedia camera automatically feeds FluidGlass through a per-eye projection pass (camera FOV, capture pose, and a 2m scene plane), rather than a stretched background. Enter AR starts this camera if absent; preview stays local. The mono path is approximate because browser camera calibration and scene depth are unavailable; `?glass=raw` disables it for diagnostics.
+Live camera capture is used for perception only. Entering AR does not start it; the user must tap **start camera + mic**. Studio and mock AR can run without capture. Real-room optical refraction is unavailable through Quest Browser's WebXR passthrough.
 
 Browser cards still use React Bits GlassSurface (SVG/CSS displacement) and SpecularButton; they are not the native AR material. SpecularButton's fragment source is shared verbatim in its own source file, but that shader is no longer used by `xr.js`.
 
@@ -47,21 +47,9 @@ Physical Quest validation remains required for stereo appearance, passthrough co
 
 The connected Quest 3S exposes Camera2 intrinsics and lens poses through `adb shell dumpsys media.camera`. Browser camera 1 maps to native camera 50; camera 2 maps to 51. The local profile replaces the 80° centred-pinhole guess with measured focal lengths, principal points, centred stream crop, lens tilt and translation. Android optical axes are converted to Three camera axes. The gyro-reference transform is assumed head-relative; this and the 2m scene plane remain approximations. Do not reuse this unit profile as universal headset calibration. The transmission pass also explicitly updates XR world matrices before its offscreen render, preventing a previous-frame eye pose from being used.
 
-### Native passthrough restored
+### Quest passthrough
 
-The full-room camera replacement was reverted at the user's request because it
-replaced surrounding passthrough with the camera's limited FOV. Production
-FluidGlass now samples camera pixels only inside panels. `cameraRoom: true` is
-an explicit synthetic-fixture option, never enabled by XrHud. The synthetic
-zero-offset result does not verify alignment against Quest native passthrough;
-that registration remains unresolved.
-
-### Current production glass policy
-
-XrHud no longer requests or samples raw camera images for glass. It renders
-FluidGlass over transparent virtual-scene buffers and leaves the real room to
-Quest's native compositor, both inside and outside panels. This eliminates the
-duplicate-camera misregistration while preserving surrounding passthrough.
-Real-room refraction has been removed, not solved; virtual-content refraction
-and reflections remain. Glass-only camera startup and its UI control were removed.
-Perception's explicit live camera/mic controls are unchanged.
+Native AR uses the Quest compositor's full surrounding room image. The glass
+surface does not project a second camera image, avoiding the alignment seam.
+The camera calibration and projection utilities remain for synthetic tests and
+perception anchoring; they do not replace the room view.

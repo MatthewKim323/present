@@ -97,6 +97,7 @@ function Shell({ api }) {
           <span className="hairline" />
         </div>
         <div className="topbar-actions">
+          {state.mode !== "live" && <button className="library-toggle" onClick={api.connectAgent}>connect live</button>}
           <button className="library-toggle" aria-expanded={service}
             onClick={() => { setService(!service); setServiceTarget(null); setSettings(false); setHelp(false); }}>
             service
@@ -400,6 +401,7 @@ function Shell({ api }) {
           </div>
         )}
         <div className="session-actions">
+          {state.mode === "live" && !state.camera && <button disabled={state.busy} onClick={api.live}>{state.busy ? "connecting…" : "start camera + mic"}</button>}
           {active && (
             <>
               {state.mic && (

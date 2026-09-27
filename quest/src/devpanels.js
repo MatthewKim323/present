@@ -1,9 +1,7 @@
-// Dev cockpit: GitHub + QM SWARM panels beside the person card, plus live
+// Dev cockpit: GitHub + Claude Code panels beside the person card, plus live
 // `context_delta` lines under the card. Same look as panels.js (dark glass, small
 // type, one accent). All data comes from the world service (contracts/EVENTS.md:
-// dev_github, qm_swarm, context_delta, preview_shot); this file never talks to GitHub.
-// qm_swarm = the WorldHook swarm (QM lanes + the Builder's Claude Code tool tail); while it is up,
-// agent_activity for the same hook is swallowed here so the swarm never renders twice.
+// dev_github, dev_session, context_delta, preview_shot); this file never talks to GitHub.
 // preview_shot = screenshot of the Builder's branch served locally, popped in front of the wearer.
 //
 // Hooks (kept to a few lines in the teammate-owned files):
@@ -13,7 +11,7 @@
 //   main.js     setDevSender(fn) so button presses go out as dev_action
 import * as THREE from 'three';
 import { drawPersonCard } from './panels.js';
-import { LITE, due } from './perf.js';
+import { LITE } from './perf.js';
 
 const FONT = 'ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif';
 const MONO = 'ui-monospace, Menlo, monospace';
@@ -38,14 +36,26 @@ export function applyDev(hud, msg) {
   hud.deltas ||= new Map(); // person_id -> [{ text, kind, t }]
   switch (msg.kind) {
     case 'dev_github':
-      hud.devGithub = msg;
-      return true;
-    case 'qm_swarm':
-      hud.qmSwarm = { ...msg, _rx: performance.now() };
-      for (const [k, a] of hud.activity || []) if (a.hook === msg.hook) hud.activity.delete(k);
+      if (!Array.isArray(msg.prs)) return false;
+      hud.devGithub = { ...msg, _selectedPr: hud.devGithub?._selectedPr };
+      if (!msg.prs?.some((p) => p.number === hud.devGithub._selectedPr)) hud.devGithub._selectedPr = msg.prs?.[0]?.number;
       return true;
     case 'agent_activity':
-      return !!hud.qmSwarm && msg.hook === hud.qmSwarm.hook; // the QM SWARM panel already shows it
+      hud.devWorkerLinks = (Array.isArray(msg.workers) ? msg.workers : []).filter(w => w && typeof w === 'object').flatMap((w) => [
+        w.url && { label: `${w.name} preview`, url: w.url },
+        w.pr_url && { label: `${w.name} PR`, url: w.pr_url },
+        w.session_url && { label: `${w.name} session`, url: w.session_url },
+      ].filter(Boolean)).slice(0, 6);
+      return !!hud.qmSwarm && msg.hook === hud.qmSwarm.hook;
+    case 'qm_swarm':
+      if (!Array.isArray(msg.workers)) return false;
+      hud.qmSwarm = { ...msg, _rx: performance.now() };
+      for (const [key, activity] of hud.activity || [])
+        if (activity.hook === msg.hook) hud.activity.delete(key);
+      return true;
+    case 'dev_session':
+      hud.devSession = { ...msg, _rx: performance.now() };
+      return true;
     case 'context_delta': {
       const pid = msg.person_id || '_';
       const list = [...(hud.deltas.get(pid) || []), { text: msg.text, kind: msg.delta_kind, t: performance.now() }];
@@ -66,7 +76,7 @@ export function applyDev(hud, msg) {
       if (hud.previewClosed !== `${msg.job_id}:${msg.pr}`) hud.previewShot = acceptShot(hud.previewShot, msg);
       return true;
     case 'clear':
-      hud.devGithub = null; hud.qmSwarm = null; hud.previewShot = null; hud.previewClosed = null; hud.deltas.clear();
+      hud.devGithub = null; hud.devSession = null; hud.qmSwarm = null; hud.devWorkerLinks = []; hud.previewShot = null; hud.previewClosed = null; hud.deltas.clear();
       return false; // let hud.js clear its own state too
     default:
       return false;
@@ -175,12 +185,12 @@ const GH_W = 340;
 // Returns a canvas with `.hits = [{ action, pr, url, x, y, w, h }]` in panel css px.
 export function drawGithubPanel(m) {
   const prs = m?.prs || [];
-  const top = prs[0];
-  const rest = prs.slice(1, 4);
+  const top = prs.find((p) => p.number === m._selectedPr) || prs[0];
+  const rest = prs.filter((p) => p !== top);
   const hunk = top?.hunk || [];
   let h = 34;
   if (!top) h += 22;
-  else h += 20 + 18 + 18 + 18 + (hunk.length ? 22 + hunk.length * 14 + 8 : 0) + 38 + rest.length * 18 + 4;
+  else h += 20 + 18 + 18 + 18 + (hunk.length ? 22 + hunk.length * 14 + 8 : 0) + 38 + rest.length * 24 + 4;
   const { c, ctx } = panel(GH_W, h);
   c.hits = [];
   glass(ctx, 0, 0, GH_W, h);
@@ -198,6 +208,7 @@ export function drawGithubPanel(m) {
   text(ctx, top.title.replace(/^\[WORLD\]\s*/, ''), 30 + nw + 8, y, { size: 12.5, weight: 600, max: GH_W - 60 - nw - 50 });
   text(ctx, top.state === 'draft' ? 'DRAFT' : (top.checks === 'none' ? '' : top.checks.toUpperCase()), GH_W - 16, y,
     { size: 8.5, weight: 600, color: ck, track: 1.2, align: 'right' });
+  if (safeLink(top.url)) c.hits.push({ action: 'open_link', url: top.url, x: 16, y: y - 14, w: GH_W - 32, h: 18 });
   y += 18;
   text(ctx, top.branch, 30, y, { size: 10.5, font: MONO, color: DIM, max: 190 });
   const dw = text(ctx, `−${top.deletions}`, GH_W - 16, y, { size: 10.5, font: MONO, color: BAD, align: 'right' });
@@ -210,8 +221,7 @@ export function drawGithubPanel(m) {
   y += 18;
   text(ctx, 'PREVIEW', 30, y, { size: 9.5, weight: 600, color: DIM, track: 1 });
   if (top.preview_url) text(ctx, host(top.preview_url), 84, y, { size: 10.5, font: MONO, color: ACCENT, max: GH_W - 100 });
-  else if (top.checks === 'pending') text(ctx, 'building…', 84, y, { size: 10.5, color: WARN });
-  else text(ctx, 'none', 84, y, { size: 10.5, color: DIM }); // e.g. the Discord bot: no deploy preview
+  else text(ctx, 'building…', 84, y, { size: 10.5, color: WARN });
 
   if (hunk.length) {
     y += 12;
@@ -232,7 +242,7 @@ export function drawGithubPanel(m) {
     y += bh;
   }
 
-  // buttons (act on the newest PR)
+  // buttons act on the explicitly selected PR
   y += 10;
   const btns = [
     { action: 'approve', label: 'APPROVE', on: true, color: ACCENT },
@@ -258,7 +268,8 @@ export function drawGithubPanel(m) {
   y += 24 + 8;
 
   for (const p of rest) {
-    y += 16;
+    y += 22;
+    c.hits.push({ action: 'select_pr', pr: p.number, x: 12, y: y - 16, w: GH_W - 24, h: 24 });
     const col = { pass: ACCENT, fail: BAD, pending: WARN, none: DIM }[p.checks] || DIM;
     dot(ctx, 20, y - 4, 2.5, col);
     const w2 = text(ctx, `#${p.number}`, 30, y, { size: 10.5, font: MONO, color: MID });
@@ -266,6 +277,77 @@ export function drawGithubPanel(m) {
     text(ctx, `+${p.additions} −${p.deletions}`, GH_W - 16, y, { size: 10, font: MONO, color: DIM, align: 'right' });
     y += 2;
   }
+  return c;
+}
+
+// ---------------------------------------------------------------- Claude Code panel
+
+const CC_W = 320;
+const TOOL_COLOR = { Edit: ACCENT, Write: ACCENT, Bash: WARN, Read: MID, Grep: MID, Glob: MID };
+
+export function sessionElapsed(m, t = performance.now()) {
+  const live = ['queued', 'running', 'pr_open'].includes(m.state);
+  return (m.elapsed_s || 0) + (live && m._rx ? (t - m._rx) / 1000 : 0);
+}
+
+export function drawSessionPanel(m, t = performance.now()) {
+  const tail = (m.tail || []).slice(-8);
+  const proc = m.procedure;
+  let h = 34 + 20 + 18 + (proc ? 18 : 0) + (tail.length ? 12 + tail.length * 14 : 0) + 24;
+  const { c, ctx } = panel(CC_W, h);
+  c.hits = [];
+  glass(ctx, 0, 0, CC_W, h);
+  const st = m.state || 'running';
+  const live = ['queued', 'running', 'pr_open'].includes(st);
+  const col = st === 'done' ? ACCENT : st === 'failed' ? BAD : WARN;
+  text(ctx, 'CLAUDE CODE', 16, 22, { size: 9.5, weight: 600, color: DIM, track: 1.4 });
+  text(ctx, m.job_id || '', 104, 22, { size: 10.5, font: MONO, color: DIM, max: 90 });
+  const ew = text(ctx, mmss(sessionElapsed(m, t)), CC_W - 16, 22, { size: 11, font: MONO, color: MID, align: 'right' });
+  const sw = text(ctx, st.replace('_', ' ').toUpperCase(), CC_W - 24 - ew, 22, { size: 8.5, weight: 600, color: col, track: 1.2, align: 'right' });
+  dot(ctx, CC_W - 32 - ew - sw, 18.5, 3, col, live ? 0.45 + 0.55 * Math.abs(Math.sin(t / 380)) : 1);
+  let y = 48;
+  text(ctx, m.feature || '', 16, y, { size: 13, weight: 600, max: CC_W - 32 });
+  y += 18;
+  text(ctx, live ? '›' : '·', 16, y, { size: 12, weight: 600, color: col });
+  text(ctx, m.step || st, 28, y, { size: 11, font: MONO, color: '#e8ecf0', max: CC_W - 44 });
+  if (proc) {
+    y += 18;
+    const rw = text(ctx, 'RECALLED', 16, y, { size: 9, weight: 600, color: ACCENT, track: 1.2 });
+    text(ctx, `${proc.title} · ${proc.steps} steps`, 24 + rw, y, { size: 11, color: MID, max: CC_W - 40 - rw });
+  }
+  if (tail.length) {
+    y += 8;
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath(); ctx.moveTo(16, y); ctx.lineTo(CC_W - 16, y); ctx.stroke();
+    y += 2;
+    tail.forEach((e, i) => {
+      y += 14;
+      ctx.globalAlpha = 0.4 + 0.6 * ((i + 1) / tail.length);
+      text(ctx, e.tool, 16, y, { size: 10.5, font: MONO, color: TOOL_COLOR[e.tool] || MID, max: 52 });
+      text(ctx, e.target, 66, y, { size: 10.5, font: MONO, color: MID, max: CC_W - 82 });
+      ctx.globalAlpha = 1;
+    });
+  }
+  y += 20;
+  const foot = m.session_url ? host(m.session_url) : `${m.mode || 'local'} · claude -p${m.pr ? ` · PR #${m.pr}` : ''}`;
+  text(ctx, m.session_url ? 'SESSION' : 'RUNNER', 16, y, { size: 9, weight: 600, color: DIM, track: 1.2 });
+  if (safeLink(m.session_url)) c.hits.push({ action: 'open_link', url: m.session_url, x: 12, y: y - 14, w: CC_W - 24, h: 22 });
+  text(ctx, foot, 72, y, { size: 10.5, font: MONO, color: m.session_url ? ACCENT : DIM, max: CC_W - 88 });
+  return c;
+}
+
+export function drawWorkerLinks(links) {
+  const rows = links.filter((l) => safeLink(l.url)).slice(0, 6);
+  const { c, ctx } = panel(CC_W, 34 + rows.length * 28);
+  c.hits = [];
+  glass(ctx, 0, 0, CC_W, c.height / S);
+  text(ctx, 'WORKER OUTPUTS', 16, 22, { size: 9.5, color: DIM, track: 1.4 });
+  rows.forEach((link, i) => {
+    const y = 34 + i * 28;
+    text(ctx, link.label, 16, y + 17, { size: 11, color: MID, max: CC_W - 48 });
+    text(ctx, '↗', CC_W - 24, y + 17, { size: 12 });
+    c.hits.push({ action: 'open_link', url: link.url, x: 12, y, w: CC_W - 24, h: 28 });
+  });
   return c;
 }
 
@@ -278,7 +360,6 @@ const SW_W = 320;
 const LANE_H = 22;
 const TAIL_H = 14;
 const TAIL_MAX = 6;
-const TOOL_COLOR = { Edit: ACCENT, Write: ACCENT, Bash: WARN, Read: MID, Grep: MID, Glob: MID };
 const STATE_COLOR = { done: ACCENT, failed: BAD, running: WARN };
 
 export function laneElapsed(m, w, t = performance.now()) {
@@ -350,8 +431,28 @@ export function drawSwarmPanel(m, t = performance.now()) {
 
 // ---------------------------------------------------------------- actions
 
-function act(hud, hit) {
+export function safeLink(url) {
+  try { const u = new URL(url); return ['http:', 'https:'].includes(u.protocol) ? u.href : null; } catch { return null; }
+}
+
+export function act(hud, hit) {
   if (!hit) return false;
+  if (hit.action === 'select_pr') {
+    if (hud.devGithub?.prs?.some((p) => p.number === hit.pr)) {
+      hud.devGithub = { ...hud.devGithub, _selectedPr: hit.pr };
+      hud.version++;
+    }
+    return true;
+  }
+  if (hit.action === 'open_link') {
+    const url = safeLink(hit.url);
+    if (!url) return true;
+    if (hud.xrActive) {
+      hud.pendingPreview = url;
+      hud.apply({ kind: 'memory_event', text: 'LINK QUEUED', detail: 'opens when you exit AR' });
+    } else openPreview(url);
+    return true;
+  }
   const msg = { kind: 'dev_action', action: hit.action, pr: hit.pr };
   if (hit.action === 'comment' && hit.text) msg.text = hit.text;
   if (!sender(msg)) {
@@ -371,6 +472,8 @@ function act(hud, hit) {
 
 // Desktop / post-XR: preview in an overlay iframe, plus a plain link (Vercel previews may refuse framing).
 export function openPreview(url) {
+  url = safeLink(url);
+  if (!url) return;
   document.getElementById('dev-preview')?.remove();
   const wrap = document.createElement('div');
   wrap.id = 'dev-preview';
@@ -404,7 +507,7 @@ const PV_WIN_W = PV_W - PV_PAD * 2;
 const PV_WIN_H = Math.round(PV_WIN_W * 10 / 16);
 const PV_FOOT = 44;
 const PV_H = PV_HEAD + PV_WIN_H + PV_FOOT;
-const PV_S = 1.7;                  // supersample: 1020 px texture (<= 1024 for mobile GPUs); the panel spans ~560 headset px
+const PV_S = 2.4;                  // supersample: 1440 px texture, about 1:1 with a 1280 wide shot
 const PV_IN_MS = 460;              // pop-in
 const PV_OUT_MS = 220;             // dismiss fade
 const PV_AUTO_DELAY = 900;         // then scroll 0 -> 40% once
@@ -572,8 +675,8 @@ export class DesktopDev {
   draw(ctx, placed, vr) {
     const hud = this.hud;
     this.hits = [];
-    this.ssRect = null; // QM SWARM panel rect (memorypanel.js stacks under it)
-    const gh = hud.devGithub, ss = hud.qmSwarm;
+    this.ssRect = null;
+    const gh = hud.devGithub, ss = hud.qmSwarm || hud.devSession;
     const t = performance.now();
     this._cockpit(ctx, placed, vr, gh, ss, t);
     this._preview(ctx, t);
@@ -604,9 +707,9 @@ export class DesktopDev {
 
   _cockpit(ctx, placed, vr, gh, ss, t) {
     const hud = this.hud;
-    if (!gh && !ss) return;
+    if (!gh && !ss && !hud.devWorkerLinks?.length) return;
     if (gh && this.cache.gh !== gh) { this.cache.gh = gh; this.cache.ghCanvas = drawGithubPanel(gh); }
-    if (ss && (this.cache.s !== ss || t - this.cache.sT > 120)) { this.cache.s = ss; this.cache.sT = t; this.cache.sCanvas = drawSwarmPanel(ss, t); }
+    if (ss && (this.cache.s !== ss || t - this.cache.sT > 120)) { this.cache.s = ss; this.cache.sT = t; this.cache.sCanvas = ss === hud.qmSwarm ? drawSwarmPanel(ss, t) : drawSessionPanel(ss, t); }
     const card = [...placed.values()][0];
     const b = card && [...placed.keys()].map((id) => hud.bboxFor(id)).find(Boolean);
     const put = (c, x, y) => { const w = c.width / S, h = c.height / S; x = Math.max(8, Math.min(innerWidth - w - 8, x)); y = Math.max(8, Math.min(innerHeight - h - 8, y)); ctx.drawImage(c, x, y, w, h); return { x, y, w, h }; };
@@ -625,7 +728,14 @@ export class DesktopDev {
         x = ghRect ? ghRect.x : leftX(w);
         y = ghRect ? ghRect.y + ghRect.h + 10 : y;
       }
-      this.ssRect = put(c, x, y);
+      const rect = put(c, x, y);
+      if (ss === hud.qmSwarm) this.ssRect = rect;
+      for (const h of c.hits || []) this.hits.push({ ...h, x: rect.x + h.x, y: rect.y + h.y });
+    }
+    if (hud.devWorkerLinks?.length) {
+      const c = drawWorkerLinks(hud.devWorkerLinks);
+      const rect = put(c, 24, innerHeight - c.height / S - 24);
+      for (const h of c.hits) this.hits.push({ ...h, x: rect.x + h.x, y: rect.y + h.y });
     }
   }
 
@@ -707,7 +817,12 @@ export class XrDev {
   }
 
   // head: Vector3, headQ: Quaternion, cardMeshes: xr.js meshes Map (to sit beside the person card).
-  frame(head, headQ, cardMeshes, dist = 1.6) {
+  frame(head, headQ, cardMeshes, dist = 1.6, hideCockpit = false) {
+    if (hideCockpit) {
+      for (const name of Object.keys(this.meshes)) this._drop(name);
+      this._preview(head, headQ, performance.now());
+      return;
+    }
     const hud = this.hud;
     const t = performance.now();
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQ);
@@ -732,10 +847,10 @@ export class XrDev {
       cy = center.y + 0.14;
     }
     const r = right(this.anchorYaw);
-    const place = (name, x) => {
+    const place = (name, x, drop = 0) => {
       const m = this.meshes[name];
       const target = center.clone().addScaledVector(r, x);
-      target.y = cy - m.h / 2;
+      target.y = cy - m.h / 2 - drop;
       if (!m.placed) { m.mesh.position.copy(target); m.placed = true; } else m.mesh.position.lerp(target, 0.12);
       m.mesh.lookAt(head);
     };
@@ -744,13 +859,18 @@ export class XrDev {
       // left of the person: card sits right of their head, so skip past the card and a body width
       place('gh', card ? -(cardHalf + 0.55 + m.w / 2) : -(0.04 + m.w / 2));
     } else this._drop('gh');
-    if (hud.qmSwarm) {
-      const s = hud.qmSwarm;
-      // only running lanes animate (pulse dot, elapsed clock); a settled swarm redraws only on new data
-      const live = (s.workers || []).some((w) => (w.state || 'running') === 'running');
-      const m = this._mesh('ss', live ? `${s._rx}:${Math.floor(t / (LITE ? 500 : 250))}` : `${s._rx}`, () => drawSwarmPanel(s, t));
+    if (hud.qmSwarm || hud.devSession) {
+      const s = hud.qmSwarm || hud.devSession;
+      const sec = Math.floor(t / 250);
+      const active = s === hud.qmSwarm && (s.workers || []).some(w => w.state === 'running');
+      const key = active ? `${s._rx}:${Math.floor(t / (LITE ? 500 : 250))}` : `${s._rx}:${sec}`;
+      const m = this._mesh('ss', key, () => s === hud.qmSwarm ? drawSwarmPanel(s, t) : drawSessionPanel(s, t));
       place('ss', card ? cardHalf + 0.06 + m.w / 2 : 0.04 + m.w / 2);
     } else this._drop('ss');
+    if (hud.devWorkerLinks?.length) {
+      const m = this._mesh('links', hud.devWorkerLinks, () => drawWorkerLinks(hud.devWorkerLinks));
+      place('links', 0, 0.48);
+    } else this._drop('links');
     this._preview(head, headQ, t);
   }
 
@@ -791,7 +911,7 @@ export class XrDev {
       mesh.lookAt(head);
       this.scene.add(mesh);
       p = this.pv = { mesh, key: shot._key, base, v: shot._v, drawn: t, moving: true };
-    } else if (p.v !== shot._v || ((moving || p.moving) && due(p, LITE ? 10 : 24, t)) || t - p.drawn > 1000) {
+    } else if (moving || p.moving || p.v !== shot._v || t - p.drawn > 250) {
       drawPreviewPanel(shot, t); // same canvas object, just re-upload
       p.mesh.material.map.needsUpdate = true;
       p.v = shot._v; p.drawn = t;
@@ -812,13 +932,13 @@ export class XrDev {
       const hit = raycaster.intersectObject(pv.mesh, false)[0];
       if (hit && hit.uv) return previewHit(this.hud, shot, hit.uv.x * PV_W, (1 - hit.uv.y) * PV_H, held);
     }
-    const gh = this.meshes.gh;
-    if (!gh) return false;
-    const hit = raycaster.intersectObject(gh.mesh, false)[0];
-    if (!hit || !hit.uv) return false;
-    const px = hit.uv.x * (gh.canvas.width / S), py = (1 - hit.uv.y) * (gh.canvas.height / S);
-    const b = (gh.canvas.hits || []).find((h) => px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h);
-    return b ? act(this.hud, b) : true; // swallow pinches on the panel body
+    const hits = raycaster.intersectObjects(Object.values(this.meshes).map((m) => m.mesh), false);
+    const hit = hits[0];
+    if (!hit?.uv) return false;
+    const panel = this.meshes[hit.object.userData.dev];
+    const px = hit.uv.x * (panel.canvas.width / S), py = (1 - hit.uv.y) * (panel.canvas.height / S);
+    const b = (panel.canvas.hits || []).find((h) => px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h);
+    return b ? act(this.hud, b) : true;
   }
 }
 
