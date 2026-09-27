@@ -3,6 +3,15 @@
     "gbrain-io": {
       "type": "http",
       "url": "https://gbrain.io/mcp"
+    },
+    "world": {
+      "command": "node",
+      "args": [
+        "quest/scripts/world-mcp.mjs"
+      ],
+      "env": {
+        "WORLD_URL": "http://127.0.0.1:8790"
+      }
     }
   }
 }

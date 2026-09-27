@@ -88,7 +88,36 @@ export class FrameGrabber {
       if (done) break;
       if (this._latest) this._latest.close();
       this._latest = value;
+      this._latestAt = performance.now();
     }
+  }
+
+  // Local full-rate pixels for XR refraction; independent of JPEG/network fps.
+  getCameraFrame() {
+    const track = this.stream.getVideoTracks()[0];
+    if (!track || track.readyState !== "live" || track.muted) return null;
+    if (this._useProcessor && this._latest) {
+      return {
+        source: this._latest,
+        cameraLabel: track.label,
+        width: this._latest.displayWidth,
+        height: this._latest.displayHeight,
+        time: this._latestAt,
+      };
+    }
+    const video = this.videoEl;
+    if (!video || video.readyState < 2 || video.paused) return null;
+    if (this._videoTime !== video.currentTime) {
+      this._videoTime = video.currentTime;
+      this._videoAt = performance.now();
+    }
+    return {
+      source: video,
+      cameraLabel: track.label,
+      width: video.videoWidth,
+      height: video.videoHeight,
+      time: this._videoAt,
+    };
   }
 
   async _tick() {

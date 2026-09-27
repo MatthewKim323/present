@@ -353,7 +353,10 @@ function act(hud, hit) {
   if (!hit) return false;
   const msg = { kind: 'dev_action', action: hit.action, pr: hit.pr };
   if (hit.action === 'comment' && hit.text) msg.text = hit.text;
-  sender(msg);
+  if (!sender(msg)) {
+    hud.apply({ kind: 'memory_event', text: 'ACTION NOT SENT', detail: 'Connect the live service to act on this PR.' });
+    return true;
+  }
   if (hit.action === 'open_preview' && hit.url) {
     if (hud.xrActive) {
       hud.pendingPreview = hit.url;
@@ -594,7 +597,7 @@ export class DesktopDev {
     ctx.translate(x + w / 2, y + h / 2); ctx.scale(k, k);
     ctx.drawImage(c, -w / 2, -h / 2, w, h);
     ctx.restore();
-    this.pv = { x, y, w, h, sc };
+    this.pv = { x: x + w * (1 - k) / 2, y: y + h * (1 - k) / 2, w: w * k, h: h * k, sc: sc * k };
   }
 
   _cockpit(ctx, placed, vr, gh, ss, t) {
@@ -657,9 +660,13 @@ export class XrDev {
     this.anchorPos = null;
     this.pv = null;   // preview shot mesh (world-locked once spawned)
     this.downT = 0;
+    this.presses = new Map();
     hud.xrActive = true;
     if (import.meta.env?.DEV) window.__xrDev = this; // headless checks drive pinches on the preview
-    session.addEventListener('selectstart', () => { this.downT = performance.now(); });
+    session.addEventListener('selectstart', (ev) => {
+      this.downT = performance.now();
+      this.presses.set(ev.inputSource, this.downT);
+    });
     session.addEventListener('end', () => {
       hud.xrActive = false;
       if (hud.pendingPreview) { openPreview(hud.pendingPreview); hud.pendingPreview = null; }
@@ -769,6 +776,8 @@ export class XrDev {
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(PV_W * PV_M_PER_PX, PV_H * PV_M_PER_PX), mat);
       mesh.renderOrder = 20; // over the cockpit + cards: it is closest
       mesh.userData.dev = 'preview';
+      mesh.userData.logicalWidth = PV_W;
+      mesh.userData.logicalHeight = PV_H;
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQ);
       fwd.y = 0;
       if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
@@ -791,11 +800,14 @@ export class XrDev {
   }
 
   // Pinch: raycaster already set from the input ray. Returns true if a dev button took it.
-  select(raycaster) {
+  select(raycaster, inputSource) {
+    const started = this.presses.get(inputSource);
+    const held = started == null ? 0 : performance.now() - started;
+    this.presses.delete(inputSource);
     const pv = this.pv, shot = this.hud.previewShot;
     if (pv && shot) {
       const hit = raycaster.intersectObject(pv.mesh, false)[0];
-      if (hit && hit.uv) return previewHit(this.hud, shot, hit.uv.x * PV_W, (1 - hit.uv.y) * PV_H, performance.now() - this.downT);
+      if (hit && hit.uv) return previewHit(this.hud, shot, hit.uv.x * PV_W, (1 - hit.uv.y) * PV_H, held);
     }
     const gh = this.meshes.gh;
     if (!gh) return false;

@@ -1,0 +1,149 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>FluidGlass · native AR material</title>
+    <style>
+      body {
+        margin: 0;
+        background: #121212;
+        color: #eee;
+        font: 15px system-ui;
+      }
+      main {
+        padding: 24px;
+      }
+      canvas {
+        display: block;
+        max-width: 100%;
+        margin-top: 16px;
+      }
+      h1 {
+        font-weight: 500;
+      }
+      p {
+        color: #aaa;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>FluidGlass · native material</h1>
+      <p>
+        actual React Bits bar geometry + Drei transmission shader. synthetic
+        scene for GPU verification.
+      </p>
+      <output id="result">loading FluidGlass</output>
+      <div id="view"></div>
+    </main>
+    <script type="module">
+      import * as THREE from "three";
+      import { FluidGlassPass } from "../src/fluid-glass-pass.js";
+      try {
+        const renderer = new THREE.WebGLRenderer({
+          antialias: true,
+          preserveDrawingBuffer: true,
+        });
+        renderer.setSize(1050, 650);
+        renderer.setClearColor(0x121212, 1);
+        document.querySelector("#view").append(renderer.domElement);
+        const camera = new THREE.PerspectiveCamera(55, 1050 / 650, 0.01, 10);
+        camera.updateMatrixWorld();
+        const scene = new THREE.Scene();
+        const img = document.createElement("canvas");
+        img.width = 1050;
+        img.height = 650;
+        const ctx = img.getContext("2d");
+        ctx.fillStyle = "#272727";
+        ctx.fillRect(0, 0, 1050, 650);
+        for (let x = 0; x < 1050; x += 70) {
+          ctx.fillStyle = x % 140 ? "#555" : "#aaa";
+          ctx.fillRect(x, 0, 26, 650);
+        }
+        for (let y = 0; y < 650; y += 70) {
+          ctx.fillStyle = "#ddd";
+          ctx.fillRect(0, y, 1050, 3);
+        }
+        ctx.font = "48px system-ui";
+        ctx.fillStyle = "white";
+        ctx.fillText("REAL TRANSMISSION", 250, 335);
+        const texture = new THREE.CanvasTexture(img);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        scene.background = texture;
+        const projected = new URLSearchParams(location.search).has("projected");
+        const registration = new URLSearchParams(location.search).has("registration");
+        const cameraSource = projected ? { forEye: () => ({
+          texture, aligned: false,
+          projectionMatrix: camera.projectionMatrix,
+          viewMatrix: camera.matrixWorldInverse,
+        }) } : null;
+        const pass = await FluidGlassPass.create(renderer, scene);
+        const panel = pass.createPanel(0.95, 0.58);
+        panel.position.z = -1;
+        panel.rotation.y = 0.12;
+        scene.add(panel);
+        panel.renderOrder = 5;
+        const gl = renderer.getContext();
+        const read = () => {
+          const p = new Uint8Array(1050 * 650 * 4);
+          gl.readPixels(0, 0, 1050, 650, gl.RGBA, gl.UNSIGNED_BYTE, p);
+          return p;
+        };
+        if (registration) {
+          panel.material.ior = 1;
+          panel.material.thickness = 0;
+          panel.material.envMapIntensity = 0;
+          panel.material.specularIntensity = 0;
+        }
+        panel.visible = false;
+        pass.render(cameraSource, camera, { cameraRoom: registration });
+        renderer.render(scene, camera);
+        const before = read();
+        panel.visible = true;
+        pass.render(cameraSource, camera, { cameraRoom: registration });
+        renderer.render(scene, camera);
+        const after = read();
+        let changed = 0;
+        for (let i = 0; i < before.length; i += 4)
+          if (Math.abs(before[i] - after[i]) > 12) changed++;
+        let alignment = null;
+        if (registration) {
+          // FBO downsampling changes edge intensity, so compare spatial
+          // registration rather than requiring identical anti-aliased pixels.
+          for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
+            let error = 0;
+            for (let y = 250; y < 400; y++) for (let x = 350; x < 700; x++) {
+              error += Math.abs(after[(y * 1050 + x) * 4] - before[((y + dy) * 1050 + x + dx) * 4]);
+            }
+            if (!alignment || error < alignment.error) alignment = {dx,dy,error};
+          }
+          if (alignment.dx !== 0 || alignment.dy !== 0)
+            throw new Error("Room/glass baseline offset: " + JSON.stringify(alignment));
+        }
+        if (!registration && changed < 1000)
+          throw new Error("FluidGlass failed to refract the scene: " + changed);
+        if (
+          renderer.info.programs.some((p) => p.diagnostics?.runnable === false)
+        )
+          throw new Error("FluidGlass shader compilation failed");
+        document.querySelector("#result").textContent =
+          (registration ? "PASS — room/glass registration; " : projected ? "PASS — projected camera + FluidGlass; " : "PASS — original FluidGlass geometry/material; ") +
+          (registration ? "0 px horizontal / 0 px vertical offset" : changed + " scene pixels changed");
+        // Keep the actual material available for inspection, with no camera permission.
+        renderer.domElement.addEventListener("pointermove", (e) => {
+          const r = renderer.domElement.getBoundingClientRect();
+          panel.rotation.y =
+            ((e.clientX - r.left - r.width / 2) / r.width) * 0.45;
+          panel.rotation.x =
+            ((e.clientY - r.top - r.height / 2) / r.height) * 0.3;
+          pass.render(cameraSource, camera, { cameraRoom: registration });
+          renderer.render(scene, camera);
+        });
+      } catch (e) {
+        document.querySelector("#result").textContent = "FAIL — " + e.message;
+        console.error(e);
+      }
+    </script>
+  </body>
+</html>

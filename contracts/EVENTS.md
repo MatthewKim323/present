@@ -207,3 +207,64 @@ samples from that track, then `person.enrolled` + `person.encountered` fire as u
 - Recognition only against the local enrolled set. Never external lookup.
 - Frames and audio are processed in memory and dropped. Only WorldEvents persist.
 - A self-introduction counts as opt-in. Learning stores embeddings only; `face_capture` crops are transient HUD pixels, never written.
+
+## Agent-summoned spatial panels
+
+`contracts/PANELS.json` is the shared `world_panel` tool definition and field
+schema. `GET /tools` returns `{ "tools": [<tool definition>] }`.
+`POST /tools/world-panel` accepts the tool arguments directly, and returns
+`{ "ok": true, "panel": <normalized message> }`. The same command can be
+submitted to `POST /hud` with `"kind": "panel"`.
+
+```json
+{
+  "op": "show",
+  "id": "follow-up-alex",
+  "type": "commitment",
+  "title": "Send Alex the demo",
+  "meta": "Tomorrow",
+  "actions": [{ "id": "done", "label": "Done" }],
+  "ttl_ms": 60000
+}
+```
+
+Messages fan out to both HUD and Quest sockets as `kind: "panel"`, with
+`op: "show" | "update" | "dismiss"`. Show requires `type` and `title`.
+Update requires an active ID, merges supplied fields, and preserves expiration
+unless `ttl_ms` is supplied. Show with an existing ID replaces its contents.
+Dismiss accepts only `op` and `id`, and is idempotent. Unknown fields, duplicate
+action IDs, invalid types and field limits return HTTP 422.
+
+At most three panels remain active; a fourth evicts the oldest-created panel,
+broadcasting its dismiss before the new show. The default lifetime is 60 seconds.
+Expiration broadcasts dismiss. `GET /panels` returns `{ "panels": [...] }`;
+new `/ws/hud` and `/ws/quest` connections replay active panels as show messages.
+Replay and normalized updates contain **remaining** `ttl_ms` (potentially below
+1000), while authored commands require a TTL of 1000–3600000 ms. Content and
+selections are kept only in memory and are lost when the service restarts.
+
+Quest selections use:
+
+```json
+{"kind":"panel_action","panel_id":"follow-up-alex","action_id":"done","request_id":"unique-request-id"}
+```
+
+The service verifies the active panel and action, then broadcasts
+`{ "kind": "panel_result", "panel_id": "...", "action_id": "...",
+"request_id": "...", "status": "received", "sequence": 1 }`.
+Invalid or stale selections receive `status: "rejected"`. Repeating a request ID
+with the same panel/action returns its original acknowledgement without recording
+another action; reusing it for a different selection is rejected. The most recent
+1000 request IDs are deduplicated. Changing a panel's action list immediately
+invalidates removed actions for new requests.
+
+`GET /panel-actions?after=0` returns `{ "actions": [...], "cursor": 1,
+"oldest_sequence": 1 }`. Sequences increase monotonically for this service
+process; only 100 selections are retained. Consumers should detect gaps using
+`oldest_sequence` and advance `after` to `cursor`. A selection records intent
+only: **neither an approval panel nor its acknowledgement executes external
+work**. The calling agent remains responsible for interpreting the selected
+action and performing any separately authorized operation.
+
+`{ "kind": "panel_dismiss", "panel_id": "follow-up-alex" }` sent over the
+Quest socket dismisses that panel for every connected client.

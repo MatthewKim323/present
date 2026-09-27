@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WORLD camera access probe</title>
+<style>
+  body { background:#151515; color:#eee; font:16px system-ui; max-width:720px; margin:40px auto; padding:20px; }
+  button { font:inherit; padding:16px; margin:0 8px 8px 0; }
+  pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+</style>
+<h1>camera access probe</h1>
+<p>run both checks on the Quest. first test plain AR, then test the WebXR raw camera feature. no images are saved or sent.</p>
+<button id="baseline">1. test plain AR</button>
+<button id="camera">2. test AR + raw camera</button>
+<pre id="result">not tested</pre>
+<script type="module">
+const buttons = [...document.querySelectorAll('button')];
+const output = document.querySelector('#result');
+const results = {
+  userAgent: navigator.userAgent,
+  secureContext: isSecureContext,
+  immersiveArSupported: 'checking',
+  plainAr: 'not tested',
+  rawCamera: 'not tested',
+};
+const publish = () => {
+  output.textContent = JSON.stringify(results, null, 2);
+  window.cameraAccessReport = results;
+};
+publish();
+if (!navigator.xr) {
+  results.immersiveArSupported = false;
+  publish();
+} else {
+  navigator.xr.isSessionSupported('immersive-ar').then(
+    supported => { results.immersiveArSupported = supported; publish(); },
+    error => { results.immersiveArSupported = error.name + ': ' + error.message; publish(); },
+  );
+}
+
+async function test(cameraRequired) {
+  buttons.forEach(button => button.disabled = true);
+  const key = cameraRequired ? 'rawCamera' : 'plainAr';
+  const report = { status:'requesting', requestedFeatures:cameraRequired ? ['camera-access'] : [] };
+  results[key] = report;
+  publish();
+  let session;
+  let timer;
+  try {
+    // Keep requestSession inside the click handler's user activation.
+    session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: report.requestedFeatures,
+    });
+    report.status = 'session granted';
+    report.enabledFeatures = session.enabledFeatures ? [...session.enabledFeatures] : null;
+    publish();
+    if (!cameraRequired) return;
+
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl2', { xrCompatible:true, alpha:true });
+    if (!gl) throw Error('WebGL2 unavailable');
+    await gl.makeXRCompatible();
+    const layer = new XRWebGLLayer(session, gl);
+    session.updateRenderState({ baseLayer:layer });
+    const binding = new XRWebGLBinding(session, gl);
+    const space = await session.requestReferenceSpace('local');
+    report.frames = 0;
+    report.framesWithAllEyeTextures = 0;
+    report.eyes = {};
+    report.errors = [];
+    let ended = false;
+    session.addEventListener('end', () => { ended = true; clearTimeout(timer); });
+    timer = setTimeout(() => { void session.end().catch(() => {}); }, 10000);
+    await new Promise(resolve => {
+      session.addEventListener('end', resolve, { once:true });
+      session.requestAnimationFrame(function frame(time, xrFrame) {
+        if (ended) return;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        const pose = xrFrame.getViewerPose(space);
+        if (pose) {
+          report.frames++;
+          let textures = 0;
+          for (const view of pose.views) {
+            const eye = report.eyes[view.eye] ||= { views:0, cameraFrames:0, textureFrames:0 };
+            eye.views++;
+            try {
+              const camera = view.camera;
+              if (camera) {
+                eye.cameraFrames++;
+                eye.width = camera.width;
+                eye.height = camera.height;
+                if (binding.getCameraImage(camera)) { eye.textureFrames++; textures++; }
+              }
+            } catch (error) {
+              if (report.errors.length < 8) report.errors.push(error.name + ': ' + error.message);
+            }
+          }
+          if (pose.views.length && textures === pose.views.length) report.framesWithAllEyeTextures++;
+        }
+        publish();
+        if (report.frames >= 120) void session.end().catch(() => {});
+        else session.requestAnimationFrame(frame);
+      });
+    });
+    report.status = report.framesWithAllEyeTextures > 0
+      ? 'per-eye camera textures observed; visual registration still untested'
+      : 'session granted, but no complete per-eye camera textures observed';
+  } catch (error) {
+    report.status = 'failed';
+    report.error = error.name + ': ' + error.message;
+    if (cameraRequired && results.plainAr.status === 'session granted') {
+      report.interpretation = 'plain AR works; the requested raw camera feature was rejected';
+    }
+  } finally {
+    clearTimeout(timer);
+    await session?.end().catch(() => {});
+    buttons.forEach(button => button.disabled = false);
+    publish();
+  }
+}
+document.querySelector('#baseline').onclick = () => test(false);
+document.querySelector('#camera').onclick = () => test(true);
+</script>
+</html>

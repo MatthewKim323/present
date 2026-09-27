@@ -1,212 +1,721 @@
-// WebXR immersive-ar HUD (Quest Browser passthrough). three.js, transparent
-// background, small canvas-texture panels. Cards are anchored by projecting the
-// perception bbox (from the passthrough camera frame) into a ray from the head
-// and placing the card at a fixed distance. Crude but good enough for one person
-// in front of you; tune with ?hfov= and ?dist=.
-import * as THREE from 'three';
-import { drawMemoryToast, drawAgentActivity, drawStatus, anyRunning } from './panels.js';
-import { drawPersonCardPlus as drawPersonCard, deltasAnimating, XrDev } from './devpanels.js';
-import { XrVision } from './visionfx.js';
+// Spatial adaptations of React Bits Target Cursor, Dock and Animated Content.
+// These are native three.js planes: no DOM overlays inside immersive WebXR.
+import * as THREE from "three";
+import { FluidGlassPass } from "./fluid-glass-pass.js";
+import { XrPointers } from "./xr-pointers.js";
+import { XrVision } from "./visionfx.js";
+import { XrDev, deltasAnimating } from "./devpanels.js";
+import { drawActionPerson as drawPersonCardPlus } from './person-actions.js';
+import {
+  drawPersonLabel,
+  drawMemoryToast,
+  drawAgentActivity,
+  drawStatus,
+  drawDock,
+  drawMemoryList,
+  drawToolPanel,
+} from "./panels.js";
 
-const M_PER_PX = 0.0012; // panel css px -> meters (300px card ~ 0.36 m)
+const M_PER_PX = 0.0012;
+const VIEWS = ["person", "memories", "agents"];
+const EMPTY_ACTIVITY = { workers: [] };
+const DOCK_Y = -0.23;
 
 export class XrHud {
-  constructor({ hud, config, onPinch, statusLine }) {
-    this.hud = hud;
-    this.config = config;
-    this.onPinch = onPinch;
-    this.statusLine = statusLine;
+  constructor({
+    hud,
+    config,
+    onPinch,
+    statusLine,
+    onPanelAction = () => {},
+    onPanelDismiss = () => {},
+  }) {
+    Object.assign(this, {
+      hud,
+      config,
+      onPinch,
+      statusLine,
+      onPanelAction,
+      onPanelDismiss,
+    });
     this.headPose = [0, 0, 0, 0, 0, 0, 1];
-    this.meshes = new Map(); // key -> { mesh, msg, canvas, target }
+    this.meshes = new Map();
     this.session = null;
+    this.reducedMotion =
+      globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ??
+      false;
+    this._head = new THREE.Vector3();
+    this._headQ = new THREE.Quaternion();
+    this._matrix = new THREE.Matrix4();
+    this._origin = new THREE.Vector3();
+    this._direction = new THREE.Vector3();
+    this._offset = new THREE.Vector3();
+    this.raycaster = new THREE.Raycaster();
+    this._select = (ev) => this._onSelect(ev);
+    this._end = () => {
+      try {
+        this._devEnd?.();
+      } finally {
+        this._dispose();
+        this.onEnd?.();
+      }
+    };
   }
 
   static async supported() {
-    return !!(navigator.xr && (await navigator.xr.isSessionSupported('immersive-ar').catch(() => false)));
+    return !!(
+      navigator.xr &&
+      (await navigator.xr.isSessionSupported("immersive-ar").catch(() => false))
+    );
   }
 
   async start() {
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(devicePixelRatio);
-    renderer.setSize(innerWidth, innerHeight);
-    renderer.setClearColor(0x000000, 0);
-    renderer.xr.enabled = true;
-    renderer.xr.setReferenceSpaceType('local');
-    this.renderer = renderer;
-    this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 50);
-
-    const session = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['local'],
-      optionalFeatures: ['hand-tracking', 'local-floor'],
-    });
-    this.session = session;
-    await renderer.xr.setSession(session);
-    this.refSpace = renderer.xr.getReferenceSpace();
-    this.dev = new XrDev(this.scene, session, this.hud); // GitHub + Claude Code panels
-    this.vfx = new XrVision(this.scene, this.hud); // perception overlay on the face (visionfx.js)
-
-    // Hand pinch (and controller trigger) arrive as `select`.
-    session.addEventListener('select', (ev) => this._onSelect(ev));
-    session.addEventListener('end', () => { renderer.setAnimationLoop(null); this.session = null; this.onEnd && this.onEnd(); });
-
-    this.raycaster = new THREE.Raycaster();
-    renderer.setAnimationLoop((t, frame) => this._frame(t, frame));
+    try {
+      const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: true,
+      });
+      this.renderer = renderer;
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.setClearColor(0x000000, 0);
+      renderer.xr.enabled = true;
+      renderer.xr.setReferenceSpaceType("local");
+      this.scene = new THREE.Scene();
+      this.camera = new THREE.PerspectiveCamera(
+        70,
+        innerWidth / innerHeight,
+        0.05,
+        50,
+      );
+      const session = await navigator.xr.requestSession("immersive-ar", {
+        requiredFeatures: ["local"],
+        optionalFeatures: [
+          "hand-tracking",
+          "local-floor",
+        ],
+      });
+      this.session = session;
+      session.addEventListener("end", this._end);
+      await renderer.xr.setSession(session);
+      const fluidGlass = await FluidGlassPass.create(renderer, this.scene, {
+        nativePassthrough: true,
+      });
+      if (this.session !== session || this.renderer !== renderer) {
+        fluidGlass.dispose();
+        throw new Error("AR session ended while loading glass");
+      }
+      this.fluidGlass = fluidGlass;
+      this.refSpace = renderer.xr.getReferenceSpace();
+      this._initDev();
+      this.vfx = new XrVision(this.scene, this.hud);
+      session.addEventListener("select", this._select);
+      this._createCursor();
+      renderer.setAnimationLoop((t, frame) => this._frame(t, frame));
+    } catch (error) {
+      const session = this.session;
+      this._dispose();
+      if (session) await session.end().catch(() => {});
+      throw error;
+    }
   }
 
-  end() { this.session && this.session.end(); }
+  async end() {
+    if (this.session) await this.session.end();
+  }
+
+  _initDev() {
+    // XrDev owns a session-end preview hook. Keep it under our single end
+    // listener so failure cleanup can release it without opening a preview.
+    this.dev = new XrDev(
+      this.scene,
+      {
+        addEventListener: (type, listener) => {
+          if (type === "end") this._devEnd = listener;
+          else {
+            this.session.addEventListener(type, listener);
+            (this._devListeners ||= []).push([type, listener]);
+          }
+        },
+      },
+      this.hud,
+    );
+  }
+
+  _dispose() {
+    for (const [type, listener] of this._devListeners || [])
+      this.session?.removeEventListener(type, listener);
+    this._devListeners = [];
+    this.dev?._dropPreview();
+    if (this.dev)
+      for (const name of Object.keys(this.dev.meshes)) this.dev._drop(name);
+    this.dev = null;
+    if (this.vfx)
+      for (const key of [...this.vfx.meshes.keys()]) this.vfx._drop(key);
+    this.vfx = null;
+    this._devEnd = null;
+    this.hud.xrActive = false;
+    this.pointers?.dispose();
+    this.pointers = null;
+    this.renderer?.setAnimationLoop(null);
+    this.session?.removeEventListener("select", this._select);
+    this.session?.removeEventListener("end", this._end);
+    for (const m of this.meshes.values()) this._remove(m);
+    this.meshes.clear();
+    this.fluidGlass?.dispose();
+    this.fluidGlass = null;
+    if (this.cursor) {
+      this.scene.remove(this.cursor);
+      this.cursor.geometry.dispose();
+      this.cursor.material.dispose();
+      this.cursor = null;
+    }
+    this.renderer?.dispose();
+    this.renderer = null;
+    this.session = null;
+    this.refSpace = null;
+    this.focused = null;
+  }
 
   _frame(t, frame) {
-    const pose = frame && frame.getViewerPose(this.refSpace);
-    if (pose) {
-      const p = pose.transform.position, o = pose.transform.orientation;
-      this.headPose = [p.x, p.y, p.z, o.x, o.y, o.z, o.w];
+    if (!frame || !this.session) return;
+    const pose = frame.getViewerPose(this.refSpace);
+    if (!pose) {
+      this.pointers?.dispose();
+      if (this.cursor) this.cursor.visible = false;
+      return;
     }
-    // Head from the viewer pose directly (the three xr camera updates inside render()).
-    const hm = pose ? new THREE.Matrix4().fromArray(pose.transform.matrix) : this.renderer.xr.getCamera().matrixWorld;
-    const head = new THREE.Vector3().setFromMatrixPosition(hm);
-    const headQ = new THREE.Quaternion().setFromRotationMatrix(hm);
-    this._head = head; this._headQ = headQ;
-    const seen = new Set();
-    const hud = this.hud;
+    const p = pose.transform.position,
+      o = pose.transform.orientation;
+    this.headPose = [p.x, p.y, p.z, o.x, o.y, o.z, o.w];
+    this._head.set(p.x, p.y, p.z);
+    this._headQ.set(o.x, o.y, o.z, o.w);
+    const head = this._head,
+      headQ = this._headQ;
+    const hud = this.hud,
+      seen = new Set();
+    const selected = hud.selectedTrack;
     let freeIdx = 0;
 
-    // 1. person cards
     for (const [id, msg] of hud.cards) {
-      const k = 'card:' + id;
-      seen.add(k);
-      const m = this._mesh(k, msg, drawPersonCard, deltasAnimating(msg));
+      const key = "label:" + id;
+      seen.add(key);
+      const selectedLabel = selected === String(id);
+      const focused = this.focused === key;
+      const m = this._mesh(
+        key,
+        msg,
+        (data) => drawPersonLabel(data, { selected: selectedLabel, focused }),
+        `${selectedLabel}:${focused}`,
+      );
       const b = hud.bboxFor(id);
       if (b) {
-        // right of the person's head
-        m.target = this._rayPoint(head, headQ, b[0] + b[2] + 0.02, b[1] + 0.12 * b[3], this.config.cardDistance);
-        // the ray hits the face's right edge; shift by half the card so it sits beside the face, not over it
+        m.target = this._rayPoint(
+          head,
+          headQ,
+          b[0] + b[2] + 0.025,
+          b[1] + 0.16 * b[3],
+          this.config.cardDistance,
+        );
+        // The ray reaches the face edge; offset half a label so it sits beside the face.
         m.target.add(new THREE.Vector3(m.mesh.geometry.parameters.width / 2, 0, 0).applyQuaternion(headQ));
-      } else if (!m.placed) {
-        m.target = this._local(head, headQ, 0.32, 0.05 - 0.22 * freeIdx++, -this.config.cardDistance);
+      } else {
+        if (!m.placed)
+          m.target = this._local(
+            head,
+            headQ,
+            0.24,
+            0.1 - 0.12 * freeIdx,
+            -this.config.cardDistance,
+          );
+        freeIdx++;
       }
-      m.mesh.userData.track = id;
+      m.mesh.userData = { track: id, action: "select", key };
     }
 
-    // 3. agent activity, under the matching card
-    for (const [id, msg] of hud.activity) {
-      const k = 'act:' + id;
-      seen.add(k);
-      const m = this._mesh(k, msg, drawAgentActivity, anyRunning(msg));
-      const card = this.meshes.get('card:' + id);
-      if (card && card.target) {
-        const ch = card.mesh.geometry.parameters.height, ah = m.mesh.geometry.parameters.height;
-        m.target = card.target.clone().add(new THREE.Vector3(0, -(ch / 2 + ah / 2 + 0.02), 0));
-      } else if (!m.placed) {
-        m.target = this._local(head, headQ, 0.32, -0.12 - 0.22 * freeIdx++, -this.config.cardDistance);
-      }
-      m.mesh.userData.track = id;
+    const toolPanels = (hud.surfacePanels?.() || []).slice(0, 3);
+    this._toolPanels(toolPanels, seen);
+    // Custom tools own the center of view; legacy content yields to them.
+    let detail = null;
+    if (!toolPanels.length && hud.view === "memories") {
+      detail = this._mesh(
+        "detail:memories",
+        hud.memoryHistory,
+        drawMemoryList,
+        hud.version,
+      );
+    } else if (!toolPanels.length && hud.view === "agents") {
+      const activity =
+        hud.activity.get(selected) ||
+        hud.activity.get("free") ||
+        [...hud.activity.values()][0] ||
+        EMPTY_ACTIVITY;
+      detail = this._mesh("detail:agents", activity, drawAgentActivity);
+    } else if (
+      !toolPanels.length &&
+      selected != null &&
+      hud.cards.has(selected)
+    ) {
+      detail = this._mesh(
+        "detail:person",
+        hud.cards.get(selected),
+        (card) => drawPersonCardPlus(card, this.reducedMotion ? t + 1000 : t),
+        !this.reducedMotion && deltasAnimating(hud.cards.get(selected), t)
+          ? Math.floor(t / 50)
+          : "settled",
+      );
+    }
+    if (detail) {
+      seen.add(detail.key);
+      // Keep the bottom edge above the dock even when the content grows.
+      const bottom = DOCK_Y + (64 * M_PER_PX) / 2 + 0.035;
+      const centerY = Math.max(
+        0.025,
+        bottom + detail.mesh.geometry.parameters.height / 2,
+      );
+      detail.headLocked = this._offsetFor(
+        detail,
+        0,
+        centerY,
+        -this.config.cardDistance,
+      );
+      detail.mesh.userData = {
+        key: detail.key,
+        action: "detail",
+        track: selected,
+      };
     }
 
-    // 2. memory toasts: head-locked, low center, stacked
-    let y = -0.28;
-    for (const tst of hud.liveToasts().reverse()) {
-      const k = 'toast:' + tst.t;
-      seen.add(k);
-      const m = this._mesh(k, tst, drawMemoryToast);
-      m.headLocked = new THREE.Vector3(0, y, -1.2);
-      m.mesh.material.opacity = tst.age < 0.08 ? tst.age / 0.08 : tst.age > 0.85 ? (1 - tst.age) / 0.15 : 1;
-      y += m.mesh.geometry.parameters.height + 0.015;
+    if (hud.dockVisible !== false) {
+      seen.add("dock");
+      const dock = this._mesh("dock", hud.view, drawDock);
+      dock.headLocked = this._offsetFor(
+        dock,
+        0,
+        DOCK_Y,
+        -this.config.cardDistance,
+      );
+      dock.mesh.userData = { key: "dock", action: "dock" };
     }
 
-    // status strip (tiny, bottom) so cam/mic/ws can be checked inside the headset
-    const line = this.statusLine();
-    seen.add('status');
-    const sm = this._mesh('status', line, drawStatus);
-    sm.headLocked = new THREE.Vector3(0, -0.42, -1.2);
-    sm.mesh.material.opacity = 0.7;
+    // One confirmation at a time; expanded detail owns the center of view.
+    // Expire hidden toasts too, while retaining them in memory history.
+    const liveToasts = hud.liveToasts();
+    for (const toast of detail || toolPanels.length
+      ? []
+      : liveToasts.slice(-1)) {
+      const key = "toast:" + toast.t;
+      seen.add(key);
+      const m = this._mesh(key, toast, drawMemoryToast);
+      m.headLocked = this._offsetFor(m, 0, -0.1, -0.8);
+      m.alpha = toast.age > 0.85 ? Math.max(0, (1 - toast.age) / 0.15) : 1;
+    }
+    seen.add("status");
+    const status = this._mesh(
+      "status",
+      `glass: native passthrough · ${this.statusLine()}`,
+      drawStatus,
+    );
+    status.headLocked = this._offsetFor(status, 0, -0.25, -0.7);
+    status.alpha = 0.7;
 
-    // place + face the viewer
-    for (const [k, m] of this.meshes) {
-      if (!seen.has(k)) {
-        this.scene.remove(m.mesh);
-        m.mesh.geometry.dispose(); m.mesh.material.map.dispose(); m.mesh.material.dispose();
-        this.meshes.delete(k);
+    for (const [key, m] of this.meshes) {
+      if (!seen.has(key)) {
+        this._remove(m);
+        this.meshes.delete(key);
         continue;
       }
+      const progress = this.reducedMotion
+        ? 1
+        : Math.max(0, Math.min(1, (t - m.born) / 220));
+      const ease = 1 - (1 - progress) ** 3;
       if (m.headLocked) {
         m.mesh.position.copy(m.headLocked).applyQuaternion(headQ).add(head);
         m.mesh.quaternion.copy(headQ);
       } else if (m.target) {
-        if (!m.placed) { m.mesh.position.copy(m.target); m.placed = true; }
-        else m.mesh.position.lerp(m.target, 0.15);
-        m.mesh.lookAt(head); // Object3D.lookAt points +z at the target: plane front faces the viewer
+        if (!m.placed) {
+          m.mesh.position.copy(m.target);
+          m.placed = true;
+        } else m.mesh.position.lerp(m.target, 0.15);
+        m.mesh.lookAt(head);
       }
+      m.mesh.scale.setScalar(0.96 + 0.04 * ease);
+      m.mesh.material.opacity = (m.alpha ?? 1) * ease;
+      m.mesh.updateMatrixWorld();
     }
-    this.dev.frame(head, headQ, this.meshes, this.config.cardDistance);
-    this.vfx.frame(this, head, headQ);
+    if (this.dev) {
+      const anchor =
+        this.meshes.get("detail:person") ||
+        this.meshes.get("label:" + selected) ||
+        [...this.meshes.values()].find((m) => m.key.startsWith("label:"));
+      // Upstream XrDev expects card:* keys and a target; adapt our collapsed
+      // labels and expanded detail without changing either renderer's state.
+      const cards = anchor
+        ? new Map([
+            ["card:anchor", { ...anchor, target: anchor.mesh.position }],
+          ])
+        : new Map();
+      this.dev.frame(head, headQ, cards, this.config.cardDistance);
+      for (const m of Object.values(this.dev.meshes))
+        m.mesh.updateMatrixWorld();
+      this.dev.pv?.mesh.updateMatrixWorld();
+    }
+    this.vfx?.frame(this, head, headQ);
+    this._hover(frame, t);
+    // Let Quest composite the real room through transparent pixels. A second
+    // camera image cannot share the compositor's depth correction and pose.
+    this.fluidGlass?.render(null, this.camera);
     this.renderer.render(this.scene, this.camera);
   }
 
-  // Normalized camera-frame coords -> world point at `dist` along the ray.
-  // Assumes the passthrough camera is roughly aligned with the head's forward axis.
+  _toolPanels(panels, seen) {
+    const slots = [-0.4, 0, 0.4];
+    const used = new Set(),
+      placed = [];
+    const inverseHead = this._headQ.clone().invert();
+    for (const panel of panels) {
+      let slot = { left: 0, center: 1, right: 2 }[panel.position] ?? 1;
+      if (used.has(slot)) slot = [0, 1, 2].find((index) => !used.has(index));
+      used.add(slot);
+      const key = "tool:" + panel.id;
+      seen.add(key);
+      const m = this._mesh(
+        key,
+        panel,
+        drawToolPanel,
+        `${panel.pendingAction?.requestId || ""}:${panel.result?.status || ""}`,
+      );
+      m.mesh.userData = { key, action: "tool", panelId: panel.id };
+      const bbox =
+        panel.anchor_track_id == null
+          ? null
+          : this.hud.bboxFor(panel.anchor_track_id);
+      if (bbox) {
+        m.headLocked = null;
+        m.target = this._rayPoint(
+          this._head,
+          this._headQ,
+          bbox[0] + bbox[2] / 2,
+          bbox[1] + bbox[3] * 0.15,
+          1.1,
+        );
+        m.target.add(
+          this._offset.set(slots[slot], 0.05, 0).applyQuaternion(this._headQ),
+        );
+        const localY = m.target
+          .clone()
+          .sub(this._head)
+          .applyQuaternion(inverseHead).y;
+        if (localY < 0.05)
+          m.target.add(
+            this._offset.set(0, 0.05 - localY, 0).applyQuaternion(this._headQ),
+          );
+      } else {
+        m.headLocked = this._offsetFor(m, slots[slot], 0.05, -1.1);
+      }
+      placed.push({
+        m,
+        slot,
+        center:
+          m.headLocked ||
+          m.target.clone().sub(this._head).applyQuaternion(inverseHead),
+      });
+    }
+    // Different tracked anchors can converge despite distinct requested slots.
+    // Fall back to the stable row when projected panel bounds would overlap.
+    const collision = placed.some((item, i) =>
+      placed
+        .slice(i + 1)
+        .some(
+          (other) =>
+            Math.abs(item.center.x - other.center.x) < 0.394 &&
+            Math.abs(item.center.y - other.center.y) < 0.3,
+        ),
+    );
+    if (collision)
+      for (const { m, slot } of placed)
+        m.headLocked = this._offsetFor(m, slots[slot], 0.05, -1.1);
+  }
+
+  _toolTarget(hit) {
+    const dev = hit.object.userData.dev;
+    const local = hit.object.userData.action === 'detail';
+    if (!dev && !local && hit.object.userData.action !== "tool") return null;
+    const canvas = hit.object.material.map.image;
+    const x = hit.uv.x * (hit.object.userData.logicalWidth || canvas.width / 2),
+      y = (1 - hit.uv.y) * (hit.object.userData.logicalHeight || canvas.height / 2);
+    const contains = (rect) =>
+      rect &&
+      x >= rect.x &&
+      x <= rect.x + rect.w &&
+      y >= rect.y &&
+      y <= rect.y + rect.h;
+    if (local) return (canvas.localActions || []).find(contains) || null;
+    if (dev) return (canvas.hits || []).find(contains) || null;
+    if (contains(canvas.panelDismiss))
+      return { ...canvas.panelDismiss, dismiss: true };
+    // Consult current state too: a second pinch can arrive before the next frame
+    // replaces the canvas hit regions after an action becomes pending.
+    const panelId = hit.object.userData.panelId;
+    const panel = this.hud.panels.get(panelId) ||
+      (panelId?.startsWith('live:') ? this.hud.surfacePanels().find(item => item.id === panelId) : null);
+    if (
+      !panel ||
+      (panel.expiresAt != null && panel.expiresAt <= performance.now()) ||
+      panel.pendingAction ||
+      panel.result?.status === "received"
+    )
+      return null;
+    return (canvas.panelActions || []).find(contains) || null;
+  }
+
+  _offsetFor(m, x, y, z) {
+    return (m.headLocked || new THREE.Vector3()).set(x, y, z);
+  }
+
   _rayPoint(head, headQ, u, v, dist) {
     const hfov = THREE.MathUtils.degToRad(this.config.hfov);
     const [fw, fh] = this.hud.frameSize;
     const vfov = 2 * Math.atan(Math.tan(hfov / 2) * (fh / fw));
-    const x = Math.tan(hfov / 2) * (u * 2 - 1);
-    const y = -Math.tan(vfov / 2) * (v * 2 - 1);
-    const dir = new THREE.Vector3(x, y, -1).normalize().applyQuaternion(headQ);
-    return head.clone().addScaledVector(dir, dist);
+    return new THREE.Vector3(
+      Math.tan(hfov / 2) * (u * 2 - 1),
+      -Math.tan(vfov / 2) * (v * 2 - 1),
+      -1,
+    )
+      .normalize()
+      .applyQuaternion(headQ)
+      .multiplyScalar(dist)
+      .add(head);
   }
 
   _local(head, headQ, x, y, z) {
     return new THREE.Vector3(x, y, z).applyQuaternion(headQ).add(head);
   }
 
-  _mesh(k, msg, draw, animate = false) {
-    let m = this.meshes.get(k);
-    if (m && m.msg === msg && !animate) return m;
+  _mesh(key, msg, draw, variant = "") {
+    let m = this.meshes.get(key);
+    if (m && m.msg === msg && m.variant === variant) return m;
     const canvas = draw(msg);
-    const w = (canvas.width / 2) * M_PER_PX, h = (canvas.height / 2) * M_PER_PX;
-    if (m && Math.abs(m.mesh.geometry.parameters.width - w) < 1e-6 && Math.abs(m.mesh.geometry.parameters.height - h) < 1e-6) {
+    const w = (canvas.width / 2) * M_PER_PX,
+      h = (canvas.height / 2) * M_PER_PX;
+    if (m) {
       m.mesh.material.map.image = canvas;
       m.mesh.material.map.needsUpdate = true;
-      m.msg = msg;
+      if (
+        m.mesh.geometry.parameters.width !== w ||
+        m.mesh.geometry.parameters.height !== h
+      ) {
+        m.mesh.geometry.dispose();
+        m.mesh.geometry = new THREE.PlaneGeometry(w, h);
+        if (m.fluid) this.fluidGlass.resizePanel(m.fluid, w, h);
+      }
+      Object.assign(m, { msg, variant });
       return m;
     }
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 4;
-    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
-    mesh.renderOrder = 10;
-    if (m) {
-      mesh.position.copy(m.mesh.position);
-      this.scene.remove(m.mesh);
-      m.mesh.geometry.dispose(); m.mesh.material.map.dispose(); m.mesh.material.dispose();
-    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 4;
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material);
+    mesh.renderOrder = key.startsWith("toast:") ? 20 : 10;
     this.scene.add(mesh);
-    const next = { ...(m || {}), mesh, msg };
-    this.meshes.set(k, next);
-    return next;
+    m = { key, mesh, msg, variant, born: performance.now() };
+    if (key !== "status" && this.fluidGlass) {
+      m.fluid = this.fluidGlass.createPanel(w, h);
+      m.fluid.position.z = -0.012;
+      m.fluid.renderOrder = mesh.renderOrder - 1;
+      mesh.add(m.fluid);
+    }
+    this.meshes.set(key, m);
+    return m;
+  }
+
+  _remove(m) {
+    if (m.fluid) {
+      m.fluid.geometry.dispose();
+      m.fluid.material.dispose();
+    }
+    this.scene.remove(m.mesh);
+    m.mesh.geometry.dispose();
+    m.mesh.material.map.dispose();
+    m.mesh.material.dispose();
+  }
+
+  _setRay(frame, source) {
+    const pose = frame.getPose(source.targetRaySpace, this.refSpace);
+    if (!pose) return false;
+    this._matrix.fromArray(pose.transform.matrix);
+    this._origin.setFromMatrixPosition(this._matrix);
+    this._direction.set(0, 0, -1).transformDirection(this._matrix);
+    this.raycaster.set(this._origin, this._direction);
+    return true;
+  }
+
+  _hit() {
+    const targets = [...this.meshes.values()]
+      .filter((m) => m.mesh.userData.action)
+      .map((m) => m.mesh);
+    for (const m of Object.values(this.dev?.meshes || {})) targets.push(m.mesh);
+    if (this.dev?.pv) targets.push(this.dev.pv.mesh);
+    return this.raycaster.intersectObjects(targets, false)[0];
+  }
+
+  _createCursor() {
+    // Four restrained corner brackets, scaled to the actual target plane.
+    const points = [];
+    for (const sx of [-1, 1])
+      for (const sy of [-1, 1]) {
+        points.push(sx * 0.5, sy * 0.34, 0, sx * 0.5, sy * 0.5, 0);
+        points.push(sx * 0.5, sy * 0.5, 0, sx * 0.38, sy * 0.5, 0);
+      }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(points, 3),
+    );
+    this.cursor = new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    );
+    this.cursor.renderOrder = 30;
+    this.cursor.visible = false;
+    this.scene.add(this.cursor);
+  }
+
+  _hover(frame, time = performance.now()) {
+    let hit = null;
+    this.pointers ||= new XrPointers(this.scene);
+    this.pointers.begin();
+    // Pointer feedback follows targetRaySpace (controller or hand), never gaze.
+    for (const source of this.session.inputSources) {
+      if (
+        source.targetRayMode !== "tracked-pointer" ||
+        !this._setRay(frame, source)
+      )
+        continue;
+      const candidate = this._hit();
+      const actionable =
+        candidate &&
+        ((candidate.object.userData.action !== "tool" &&
+          !candidate.object.userData.dev) ||
+          this._toolTarget(candidate));
+      this.pointers.update(
+        source,
+        this._origin,
+        this._direction,
+        candidate,
+        this._headQ,
+        !!actionable,
+      );
+      if (candidate && (!hit || candidate.distance < hit.distance))
+        hit = candidate;
+    }
+    this.pointers.end();
+    this.focused = hit?.object.userData.key || null;
+    this.cursor.visible = !!hit;
+    if (!hit) return;
+    const mesh = hit.object;
+    const toolTarget = this._toolTarget(hit);
+    if (mesh.userData.action === "tool" || mesh.userData.dev) {
+      this.cursor.visible = !!toolTarget;
+      if (!toolTarget) return;
+      const canvas = mesh.material.map.image;
+      const width = mesh.userData.logicalWidth || canvas.width / 2,
+        height = mesh.userData.logicalHeight || canvas.height / 2;
+      const scale = (mesh.geometry.parameters.width / width) * mesh.scale.x;
+      this._offset
+        .set(
+          (toolTarget.x + toolTarget.w / 2 - width / 2) * scale,
+          (height / 2 - toolTarget.y - toolTarget.h / 2) * scale,
+          0.003,
+        )
+        .applyQuaternion(mesh.quaternion);
+      this.cursor.position.copy(mesh.position).add(this._offset);
+      this.cursor.quaternion.copy(mesh.quaternion);
+      this.cursor.scale.set(
+        toolTarget.w * scale + 0.005,
+        toolTarget.h * scale + 0.005,
+        1,
+      );
+      return;
+    }
+    const isDock = mesh.userData.action === "dock";
+    const segment = isDock ? Math.min(2, Math.floor(hit.uv.x * 3)) : 0;
+    const width = mesh.geometry.parameters.width * mesh.scale.x;
+    const height = mesh.geometry.parameters.height * mesh.scale.y;
+    this.cursor.position.copy(mesh.position);
+    this._offset
+      .set(isDock ? ((segment - 1) * width) / 3 : 0, 0, 0.003)
+      .applyQuaternion(mesh.quaternion);
+    this.cursor.position.add(this._offset);
+    this.cursor.quaternion.copy(mesh.quaternion);
+    this.cursor.scale.set(
+      (isDock ? width / 3 : width) + 0.008,
+      height + 0.008,
+      1,
+    );
   }
 
   _onSelect(ev) {
-    const pose = ev.frame.getPose(ev.inputSource.targetRaySpace, this.refSpace);
-    if (!pose) return;
-    const mtx = new THREE.Matrix4().fromArray(pose.transform.matrix);
-    const origin = new THREE.Vector3().setFromMatrixPosition(mtx);
-    const dir = new THREE.Vector3(0, 0, -1).transformDirection(mtx);
-    this.raycaster.set(origin, dir);
-    if (this.dev.select(this.raycaster)) return;
-    const targets = [...this.meshes.values()].filter((m) => m.mesh.userData.track != null).map((m) => m.mesh);
-    const hit = this.raycaster.intersectObjects(targets, false)[0];
-    if (hit) { this.onPinch(hit.object.userData.track); return; }
-    // No panel hit: pick the tracked person closest to the ray direction.
-    let best = null, bestAng = THREE.MathUtils.degToRad(15);
+    if (!this.refSpace || !this._setRay(ev.frame, ev.inputSource)) return;
+    const hit = this._hit();
+    if (hit) {
+      if (hit.object.userData.dev) {
+        this.dev.select(this.raycaster, ev.inputSource);
+        return;
+      }
+      const { action, track } = hit.object.userData;
+      if (action === "tool") {
+        const target = this._toolTarget(hit);
+        if (target?.dismiss) this.onPanelDismiss(hit.object.userData.panelId);
+        else if (target?.id)
+          this.onPanelAction(hit.object.userData.panelId, target.id);
+      } else if (action === 'detail') {
+        const target = this._toolTarget(hit);
+        if (target?.action) this.hud.onPersonAction?.(track, target.action);
+      } else if (action === "dock") {
+        this.hud.setView(VIEWS[Math.min(2, Math.floor(hit.uv.x * 3))]);
+      } else if (action === "select") {
+        this.hud.select(track);
+        this.hud.setView("person");
+        this.onPinch(track);
+      } else if (track != null) this.onPinch(track);
+      return;
+    }
+    let best = null,
+      bestAngle = THREE.MathUtils.degToRad(15);
     for (const [id] of this.hud.tracks) {
       const b = this.hud.bboxFor(id);
       if (!b) continue;
-      if (!this._head) break;
-      const p = this._rayPoint(this._head, this._headQ, b[0] + b[2] / 2, b[1] + b[3] / 2, 2);
-      const ang = dir.angleTo(p.sub(origin).normalize());
-      if (ang < bestAng) { bestAng = ang; best = id; }
+      const point = this._rayPoint(
+        this._head,
+        this._headQ,
+        b[0] + b[2] / 2,
+        b[1] + b[3] / 2,
+        2,
+      );
+      const angle = this._direction.angleTo(
+        point.sub(this._origin).normalize(),
+      );
+      if (angle < bestAngle) {
+        bestAngle = angle;
+        best = id;
+      }
+    }
+    if (best != null) {
+      this.hud.select(best);
+      this.hud.setView("person");
     }
     this.onPinch(best);
   }

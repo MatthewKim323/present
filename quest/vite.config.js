@@ -15,7 +15,17 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/ws': { target: WORLD, ws: true, changeOrigin: true },
+      '/tools': { target: WORLD, changeOrigin: true },
+      '/panels': { target: WORLD, changeOrigin: true },
+      '/panel-actions': { target: WORLD, changeOrigin: true },
+      '/hud': { target: WORLD, changeOrigin: true },
       '/events': { target: WORLD, changeOrigin: true },
+      '/builder': { target: WORLD, changeOrigin: true },
+      '/qm': { target: WORLD, changeOrigin: true },
+      '/people': { target: WORLD, changeOrigin: true },
+      '/health': { target: WORLD, changeOrigin: true },
+      '/procedures': { target: WORLD, changeOrigin: true },
+      '/debug': { target: WORLD, changeOrigin: true },
     },
   },
 });
