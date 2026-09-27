@@ -3,7 +3,7 @@
   ws  /ws/quest   Quest (or desktop sim) streams frames/audio/gesture/label; receives HUD messages
   ws  /ws/hud     any HUD client; receives HUD messages
   POST /events    inject a WorldEvent (demo scripts, tests)
-  POST /hud       push a raw HUD message (e.g. QM agent_activity) to every HUD client
+  POST /hud       push a raw HUD message (e.g. QM agent_activity, watch_fired) to every HUD client
   POST /gbrain/query, GET /gbrain/page/{slug}, GET /gbrain/person/{id}   read-only GBrain for QM workers (bearer)
   GET  /health    status + latency numbers
   debug: POST /debug/utterance, POST /debug/end-conversation, GET /people
@@ -39,6 +39,7 @@ from .vision import VisionPipeline
 from .intro import IntroEnroller
 from .visionfx import VisionFx
 from .director import add_director_routes
+from .watches import PinchAdopter, WatchBoard, WatchRequester
 
 log = logging.getLogger("world")
 
@@ -92,7 +93,9 @@ class WorldService:
         bcfg = BuilderConfig.from_env()
         self.procfeed = ProcFeed(self.hub.broadcast, bcfg.procedures_dir)  # Memorable phases + library on the HUD (procfeed.py)
         self.builder = Builder(bcfg, self.hub.broadcast, anchor=self._track_for, on_procedure=self.on_procedure, procfeed=self.procfeed)
-        self.fanout = FanOut([self.gbrain, self.qm, self.hud, BuilderSink(self.builder)])
+        self.watchboard = WatchBoard(self.hub.broadcast)  # spoken watches + pinch-adopted agents (watches.py)
+        self.qm.on_response, self.hud.agent_for = self.watchboard.on_qm_response, self.watchboard.agent_for
+        self.fanout = FanOut([self.gbrain, self.qm, self.hud, BuilderSink(self.builder), self.watchboard])
         self.devfeed = DevFeed(self.builder, self.hub.broadcast)  # dev cockpit: dev_github / qm_swarm HUD
         self.conv = ConversationManager(self.s.conv_gap_s, self.s.leave_grace_s)
         self.visionfx = VisionFx(self)  # vision / face_capture overlay feed (visionfx.py)
@@ -101,6 +104,9 @@ class WorldService:
         self.live = RollingExtractor(self.emit, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name,
                                      known=getattr(self.gbrain, "known_facts", None), client=False)
         self.live.client = self.extractor.client  # live passes only when extraction is enabled
+        self.watch_req = WatchRequester(self.emit, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name,
+                                        people=lambda: {pid: p.name for pid, p in self.store.people.items()}, client=self.live.client)
+        self.pinch = PinchAdopter(self.emit, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name)
         self.transcriber: Transcriber | None = transcriber
         self.vad = EnergyVAD(16000)
         self.source = "quest3s"
@@ -203,6 +209,8 @@ class WorldService:
         elif kind == "gesture":
             t = self.vision.tracker.tracks.get(int(msg.get("target_track_id") or -1))
             log.info("gesture %s on track %s", msg.get("type"), msg.get("target_track_id"))
+            if msg.get("type") == "pinch" and t is not None:
+                await self.pinch.on_pinch(t)  # recognized person -> world.entity_adopted
             if t is not None and t.label:
                 await self.hub.broadcast(await self.hud.person_card(self.vision._encounter_event(t)))
         elif kind == "dev_action":
@@ -283,6 +291,7 @@ class WorldService:
         closed = self.conv.add_utterance(u, pid, name, tid)
         for enc in closed:
             asyncio.create_task(self._finish_encounter(enc))
+        await self.watch_req.on_utterance(u, (pid, name), tid)  # wearer's standing instructions (regex prefilter, then haiku)
 
     async def _tick_loop(self) -> None:
         while True:
@@ -417,6 +426,9 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     @app.post("/hud")
     async def post_hud(body: dict[str, Any]):
         kinds = ("person_card", "memory_event", "agent_activity", "context_delta", "dev_github", "qm_swarm", "relationship_vector")
+        if body.get("kind") == "watch_fired" and body.get("watch_id"):  # QM (or anyone) reports a fired WorldWatch
+            await svc.watchboard.fired(str(body["watch_id"]))
+            return {"ok": True}
         if body.get("kind") not in kinds:
             raise HTTPException(422, "kind must be one of " + " | ".join(kinds))
         svc.devfeed.on_hud(body)  # QM's swarm lanes + recall feed the merged qm_swarm panel
