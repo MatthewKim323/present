@@ -25,19 +25,19 @@ const HEX = [ACCENT, WARN, BAD, '#eef7ff', '#9eadbd'];
 const CAP = 256;          // sprites per frame (orbs + particles + rings + trails)
 const MAX_PARTICLES = 170;
 const STRIDE = 9;         // x y z r g b a size shape
-const LABEL_M_PER_PX = 0.00125;
+const LABEL_M_PER_PX = 0.0017;
 const FADE_AFTER_S = 20, FADE_TO = 0.3;
 
 // Local layout, EVENT node at the origin (eye level), graph hangs below it. ~1 m wide incl. labels.
 const LAYOUT = {
   event: [0, 0, 0],
   qm: [0, -0.115, 0.02],
-  context: [-0.25, -0.235, 0.05],
-  product: [0, -0.262, 0.07],
-  builder: [0.25, -0.235, 0.05],
-  gbrain: [-0.33, -0.43, 0.02],
-  memorable: [0.03, -0.465, 0.04],
-  pr: [0.43, -0.385, 0.03],
+  context: [-0.29, -0.235, 0.05],
+  product: [0, -0.29, 0.07],
+  builder: [0.29, -0.235, 0.05],
+  gbrain: [-0.36, -0.44, 0.02],
+  memorable: [0.03, -0.47, 0.04],
+  pr: [0.44, -0.4, 0.03],
 };
 const EXTRA = [[-0.125, -0.335, 0.06], [0.125, -0.335, 0.06], [-0.4, -0.27, 0.03]];
 const CARD_AT = [0.03, -0.52, 0.05]; // top-center of the procedure card
@@ -200,6 +200,7 @@ export class SwarmSim {
     this.lastGh = null;
     this.pendingRecall = null;
     this.buf = new Float32Array(CAP * STRIDE);
+    this.kbuf = new Uint8Array(CAP); // palette index per sprite (desktop tints by cached sprite)
     this.n = 0;
     this.lastT = -1;
     this.opacity = 1;
@@ -380,7 +381,7 @@ export class SwarmSim {
     if (s.nodes.has('memorable')) return s.nodes.get('memorable');
     const m = this._node(s, 'memorable', 'memorable', LAYOUT.memorable, at, { name: 'MEMORABLE' });
     this._gbrain(s, at);
-    this._edge(s, 'memorable', 'gbrain', at + 0.1, 0.45, { bend: -0.14 });
+    this._edge(s, 'memorable', 'gbrain', Math.max(at + 0.1, s.nodes.get('gbrain').bornAt + 0.1), 0.45, { bend: -0.14 });
     return m;
   }
 
@@ -454,6 +455,7 @@ export class SwarmSim {
 
   emit(x, y, z, k, a, size, shape) {
     if (this.n >= CAP || a <= 0.004) return;
+    this.kbuf[this.n] = k;
     const o = this.n++ * STRIDE, b = this.buf, c = PAL[k];
     b[o] = x; b[o + 1] = y; b[o + 2] = z; b[o + 3] = c[0]; b[o + 4] = c[1]; b[o + 5] = c[2];
     b[o + 6] = a; b[o + 7] = size; b[o + 8] = shape;
@@ -563,7 +565,7 @@ export class SwarmSim {
       if (t < r.t0) continue;
       const u = (t - r.t0) / 0.9;
       this._pos(s, r.id, tmp);
-      this.emit(tmp[0], tmp[1], tmp[2], r.k, 0.9 * (1 - u) * (1 - u), (r.big ? 0.05 : 0.035) + (r.big ? 0.16 : 0.1) * easeOut(u), 2);
+      this.emit(tmp[0], tmp[1], tmp[2], r.k, 0.9 * (1 - u) * (1 - u), (r.big ? 0.03 : 0.022) + (r.big ? 0.085 : 0.05) * easeOut(u), 2);
     }
 
     // fliers (birth beam, recalled procedure) with a short comet trail
@@ -611,7 +613,9 @@ export class SwarmSim {
       if (!b) return;
       const u = (t - gh.t0) / 2.4;
       const a = u < 0.1 ? u / 0.1 : u > 0.55 ? (1 - u) / 0.45 : 1;
-      this.labels.push({ id: gh.uid, canvas: gh.canvas, x: b.pos[0] + 0.052, y: b.pos[1] + 0.028 + 0.05 * easeOut(u), z: b.pos[2] + 0.01, ax: 0, ay: 1, alpha: a * 0.95 });
+      // a tiny rising log: newest at the bottom, older ones pushed up and fading
+      const slot = s.ghosts.length - 1 - i;
+      this.labels.push({ id: gh.uid, canvas: gh.canvas, x: b.pos[0] + 0.05, y: b.pos[1] + 0.006 + 0.012 * easeOut(u / 0.2) + slot * 0.03, z: b.pos[2] + 0.01, ax: 0, ay: 1, alpha: a * (slot ? 0.6 : 0.95) });
     });
 
     // procedure card materializes under Memorable
@@ -731,7 +735,9 @@ export class XrSwarm {
     this.edges = new Map();  // id -> { mesh, ver }
     this.labels = new Map(); // id -> { mesh, canvas, ver, w, h }
     this.side = new URLSearchParams(location.search).get('swarmside') === 'right' ? 1 : -1;
-    this.off = Number(new URLSearchParams(location.search).get('swarmx') || 0.6);
+    const q = new URLSearchParams(location.search);
+    this.off = Number(q.get('swarmx') || 0.6);   // sideways from the person (m)
+    this.pull = Number(q.get('swarmz') || 0.45); // toward the wearer (m)
 
     const quad = new THREE.PlaneGeometry(1, 1);
     const g = new THREE.InstancedBufferGeometry();
@@ -768,9 +774,9 @@ export class XrSwarm {
     const toP = P.clone().sub(head); toP.y = 0; toP.normalize();
     const right = new THREE.Vector3(-toP.z, 0, toP.x);
     const A = P.clone().addScaledVector(right, this.side * this.off);
-    A.y = head.y + 0.1;
+    A.y = head.y + 0.03;
     const back = head.clone().sub(A); back.y = 0;
-    A.addScaledVector(back.normalize(), 0.3);
+    A.addScaledVector(back.normalize(), this.pull); // closer than the person: legible + in front of the cockpit panels
     this.group.position.copy(A);
     this.group.lookAt(head.x, A.y, head.z); // +z of the graph faces the wearer, upright
     this.group.updateMatrixWorld(true);
@@ -923,19 +929,20 @@ export class DesktopSwarm {
   // Graph frame on screen: EVENT node origin, px per meter, slow yaw for parallax.
   _frame(s, vr) {
     const hud = this.hud;
-    const scale = Math.min(innerWidth * 0.52, innerHeight * 0.9, 640);
+    let scale = Math.min(innerWidth * 0.52, innerHeight * 0.9, 640);
     const b = s.anchor != null ? hud.bboxFor(s.anchor) : [...hud.tracks.keys()].map((id) => hud.bboxFor(id)).find(Boolean);
     let hx, hy, ox, oy;
     if (b) {
       hx = vr.x + (b[0] + b[2] / 2) * vr.w; hy = vr.y + b[1] * vr.h;
       ox = vr.x + b[0] * vr.w - 0.5 * scale - 24;
-      oy = hy + 0.2 * b[3] * vr.h;
+      oy = hy + 290; // below the GitHub panel devpanels.js draws left of the person
     } else {
       hx = innerWidth * 0.62; hy = innerHeight * 0.3;
       ox = innerWidth * 0.36; oy = innerHeight * 0.3;
     }
     ox = Math.max(0.36 * scale + 80, Math.min(innerWidth - 0.5 * scale - 16, ox));
-    oy = Math.max(60, Math.min(innerHeight - 0.62 * scale - 24, oy));
+    oy = Math.max(60, Math.min(innerHeight * 0.55, oy));
+    scale = Math.max(300, Math.min(scale, (innerHeight - oy - 30) / 0.66));
     return { ox, oy, scale, hx, hy };
   }
 
@@ -993,9 +1000,8 @@ export class DesktopSwarm {
       const o = i * STRIDE;
       this._proj(B[o], B[o + 1], B[o + 2], F, t, p);
       const r = B[o + 7] * F.scale * p[2] * (sim.scale || 1);
-      const k = PAL.findIndex((c) => c[0] === B[o + 3] && c[1] === B[o + 4] && c[2] === B[o + 5]);
       ctx.globalAlpha = clamp01(B[o + 6] * op);
-      ctx.drawImage(spriteCanvas(k < 0 ? 3 : k, B[o + 8]), p[0] - r, p[1] - r, r * 2, r * 2);
+      ctx.drawImage(spriteCanvas(sim.kbuf[i], B[o + 8]), p[0] - r, p[1] - r, r * 2, r * 2);
     }
     ctx.globalCompositeOperation = 'source-over';
 
