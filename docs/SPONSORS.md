@@ -169,3 +169,14 @@ Nothing Memorable: no `memorable` binary, no `~/.memorable`, no mentions in `~/.
 - https://github.com/yc-software/qm (docs/memory-providers.md, src/memory/memorable/config.ts), MIT
 - https://events.ycombinator.com/gbrain-qm-river-memorable-hackathon (page body empty when fetched)
 - npm: `memorable-cli` 0.5.30
+
+## Memorable extract: measured behavior (2026-09-27)
+
+Key minted via device flow (`POST /v1/device/code` -> approve at memorable.sh/dash/device -> `POST /v1/device/token`), stored in `.env.memorable`.
+
+Two smoke traces against `POST /v1/extract` (same task line):
+
+- Custom tool names (`gbrain_search`, `write`), no verify command: every step `activity_class: other`, **rejected** (`judge.admitted: false, reason: no_postcondition`).
+- Canonical names (`Grep`, `Read`, `Write`, `Edit`, `Bash`) ending in a verifying `Bash` with `exit_code: 0`: classes `search/read/write/write/execute`, postcondition derived from the last command, **admitted**.
+
+Implication for the WorldHook swarm: tool names must map to known classes (search/read/write/execute) and run 1 must end with a verifying command that exits 0, or no procedure gets stored and run 2 has nothing to recall.

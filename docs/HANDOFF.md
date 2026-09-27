@@ -21,7 +21,7 @@ Read CLAUDE.md, contracts/EVENTS.md, docs/SPONSORS.md, docs/QM.md first.
 
 ## Blockers on matt
 
-1. `MEMORABLE_API_KEY` (`mk_...`) from https://memorable.sh/dash (Account -> New key for an agent).
+1. ~~`MEMORABLE_API_KEY`~~ DONE via device flow, lives in `.env.memorable` (gitignored). `set -a; . ./.env.memorable; set +a` to load.
 2. gbrain.io OAuth via `/mcp`.
 3. `ANTHROPIC_API_KEY` in `perception/.env`. OpenAI key is in `~/.zshrc`.
 4. Quest in dev mode, USB-C, Horizon OS version.
