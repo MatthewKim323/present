@@ -10,7 +10,7 @@ import { XrVision } from './visionfx.js';
 import { XrSwarm } from './swarmviz.js';
 import { XrBrain } from './brainpanel.js';
 import { XrMemory } from './memorypanel.js';
-import { ANIM_HZ, LITE, due, safe, frameBegin, frameEnd, perfLine, drawPerf, drawOffline, offlineText } from './perf.js';
+import { ANIM_HZ, due, safe, frameBegin, frameEnd, perfLine, drawPerf, drawOffline, offlineText } from './perf.js';
 
 const M_PER_PX = 0.0012; // panel css px -> meters (300px card ~ 0.36 m)
 
