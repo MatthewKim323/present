@@ -11,6 +11,21 @@ MODELS_DIR = ROOT_DIR / "models"
 DATA_DIR = ROOT_DIR / "data"
 
 
+def _load_dotenv(path: Path) -> None:
+    # tiny .env loader (KEY=value lines), real env vars win
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+_load_dotenv(ROOT_DIR / ".env")
+
+
 def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
