@@ -1,11 +1,11 @@
 """Opt-in enrollment CLI. Only embeddings are stored (perception/data/people.json), never photos or frames.
 
   uv run python -m perception.enroll --from-dir data/enroll/     # enroll/<name>/*.jpg, one folder per person
-  uv run python -m perception.enroll --live "Alex"               # webcam: capture N samples of the largest face
+  uv run python -m perception.enroll --live "Matthew"            # webcam: capture N samples of the largest face
   uv run python -m perception.enroll --list
   uv run python -m perception.enroll --check                     # leave-one-out self-match report
-  uv run python -m perception.enroll --remove alex
-  uv run python -m perception.enroll --meta alex role=founder company=Acme
+  uv run python -m perception.enroll --remove matthew
+  uv run python -m perception.enroll --meta matthew role=builder "company=Kali Labs"
 """
 from __future__ import annotations
 

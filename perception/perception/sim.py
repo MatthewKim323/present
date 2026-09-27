@@ -3,7 +3,7 @@
     uv run python -m perception.sim [--url ws://localhost:8787/ws/quest] [--no-mic] [--fps 10]
 
 Window keys:  q quit   e end conversation now   m toggle mic
-Terminal:     "<track_id> <name>"  -> label message ("that's Alex", opt-in enrollment)
+Terminal:     "<track_id> <name>"  -> label message ("that's Matthew", opt-in enrollment)
               "say <text>"         -> inject an utterance as if heard (skips ASR)
               "end"                -> end the conversation now
 """

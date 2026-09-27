@@ -46,12 +46,12 @@ Only embeddings are stored, in `data/people.json` (gitignored). Photos/frames ar
 uv run python -m perception.enroll --from-dir data/enroll/
 # -> per-person used/skipped counts (no face, or multiple similar-size faces) + leave-one-out self-match check
 
-uv run python -m perception.enroll --live "Alex"            # webcam, 12 samples
-uv run python -m perception.enroll --list | --check | --remove alex
-uv run python -m perception.enroll --meta alex role=founder company=Acme   # shown on the person card
+uv run python -m perception.enroll --live "Matthew"         # webcam, 12 samples
+uv run python -m perception.enroll --list | --check | --remove matthew
+uv run python -m perception.enroll --meta matthew role=builder "company=Kali Labs"   # shown on the person card
 ```
 
-Live, over the wire: `{"kind":"label","track_id":3,"name":"Alex"}` ("that's Alex") captures samples from that track and emits `person.enrolled`. Unknown faces show as `UNKNOWN PERSON NN`.
+Live, over the wire: `{"kind":"label","track_id":3,"name":"Matthew"}` ("that's Matthew") captures samples from that track and emits `person.enrolled`. Unknown faces show as `UNKNOWN PERSON NN`.
 
 ## Desktop sim (no headset)
 
@@ -60,22 +60,23 @@ uv run python -m perception            # terminal 1
 uv run python -m perception.sim        # terminal 2: webcam + mic, OpenCV window with boxes/labels/HUD
 ```
 
-Grant camera + mic to your terminal app (System Settings > Privacy). In the sim window: `q` quit, `e` end conversation now, `m` toggle mic. In the sim terminal: `3 Alex` labels track 3, `say <text>` injects an utterance (skips ASR), `end` ends the conversation.
+Grant camera + mic to your terminal app (System Settings > Privacy). In the sim window: `q` quit, `e` end conversation now, `m` toggle mic. In the sim terminal: `3 Matthew` labels track 3, `say <text>` injects an utterance (skips ASR), `end` ends the conversation.
 
 ## Demo without cameras
 
 ```bash
-uv run python -m perception.demo_inject              # Alex scenario: ready-made events -> POST /events
-uv run python -m perception.demo_inject --customer2  # second customer, same Canvas complaint (run 2)
-uv run python -m perception.demo_inject --via-llm    # inject Alex utterances, end conversation, real Claude extraction
+uv run python -m perception.demo_inject              # Matthew gives Stephen Opal feedback + a commitment: ready-made events -> POST /events
+uv run python -m perception.demo_inject --feature    # Matthew asks for a "How it works" section under the Opal hero (Builder run 1)
+uv run python -m perception.demo_inject --customer2  # similar second request, "How payouts work" section (Memorable recall, run 2)
+uv run python -m perception.demo_inject --via-llm    # same scenarios as utterances, end conversation, real Claude extraction
 ```
 
 ## Builder: live coding from reality
 
-A customer asks for a concrete product change in person -> `feature_request.detected` -> a coding agent ships it as a PR on the demo product repo ([MatthewKim323/syla-demo](https://github.com/MatthewKim323/syla-demo), Vite + React, Vercel git integration so every PR gets a preview URL) -> HUD shows it. Code: `perception/builder.py`.
+A customer asks for a concrete product change in person -> `feature_request.detected` -> a coding agent ships it as a PR on Opal ([qtzx06/opal](https://github.com/qtzx06/opal), web app in `app/`, Vite + React, Vercel git integration so every PR gets a preview URL; override with `BUILDER_REPO`) -> HUD shows it. Code: `perception/builder.py`.
 
 - Trigger: `BUILDER_AUTO=1` (BuilderSink dispatches on the event, no QM needed) or QM's Builder worker calls `POST /builder/dispatch {event_id, spec, repo?}`. Deduped per `event_id`, so both paths firing yields one job.
-- Runner: `local` (default) = fresh clone under `data/builder/<job>/`, `npm install`, headless `claude -p` (stream-json, `--strict-mcp-config`, subscription login: `ANTHROPIC_API_KEY` is stripped unless `BUILDER_USE_API_KEY=1`) on branch `world/<feature>-<job>`, agent commits/pushes/opens `[WORLD] <feature>`; if it doesn't, the runner opens the PR. `cloud` = fire a Claude Code routine (`CLAUDE_ROUTINE_FIRE_URL` + `CLAUDE_ROUTINE_TOKEN`), PR found by `[WORLD]` title. `BUILDER_MODE=auto` picks cloud when the token is set.
+- Runner: `local` (default) = fresh clone under `data/builder/<job>/`, `npm install`, headless `claude -p` (stream-json, `--strict-mcp-config`, subscription login: `ANTHROPIC_API_KEY` is stripped unless `BUILDER_USE_API_KEY=1`) on branch `world/<feature>`, agent commits/pushes/opens `[WORLD] <feature>`; if it doesn't, the runner opens the PR. `cloud` = fire a Claude Code routine (`CLAUDE_ROUTINE_FIRE_URL` + `CLAUDE_ROUTINE_TOKEN`), PR found by `[WORLD]` title. `BUILDER_MODE=auto` picks cloud when the token is set.
 - Progress: polls GitHub (`gh`) every `BUILDER_POLL_S` (4s): PR on the branch, then the Vercel GitHub deployment status of the PR head sha -> preview URL.
 - HUD `agent_activity`, worker `Builder`: `queued: <feature>` -> `coding: <feature>` / `reading X` / `editing X` / `building` / `opening PR` -> `PR #N opened · building preview` -> done `PR #N · preview ready · <url>` (worker also carries `url`, `pr_url`) or failed.
 - Memorable (procedural memory): after a local run the canonical tool trace (names + command/file_path only, never contents) goes to `POST $MEMORABLE_API_URL/v1/extract` (key from `../.env.memorable`). Admitted drafts land in `data/procedures/`. Next job with a similar request recalls the best one (lexical), injects it into the prompt as reference-only, and the HUD shows `RECALLED PROCEDURE · <title> · <n> steps`.
@@ -83,7 +84,7 @@ A customer asks for a concrete product change in person -> `feature_request.dete
 
 ```bash
 BUILDER_AUTO=1 WORLD_WEARER_ID=stephen WORLD_WEARER_NAME=Stephen uv run python -m perception
-uv run python -m perception.demo_inject --feature --via-llm   # Matthew asks Stephen for an onboarding checklist
+uv run python -m perception.demo_inject --feature --via-llm   # Matthew asks Stephen for a How it works section on the Opal landing page
 ```
 
 ## Endpoints
