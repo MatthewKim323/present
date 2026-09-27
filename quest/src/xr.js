@@ -9,6 +9,7 @@ import { drawPersonCardPlus as drawPersonCard, deltasAnimating, XrDev } from './
 import { XrVision, hideCard } from './visionfx.js';
 import { XrSwarm } from './swarmviz.js';
 import { XrBrain } from './brainpanel.js';
+import { XrCaptions } from './captions.js';
 import { XrMemory } from './memorypanel.js';
 import { ANIM_HZ, due, safe, frameBegin, frameEnd, perfLine, drawPerf, drawOffline, offlineText } from './perf.js';
 import { XR, xrFrame, xrAt, show } from './layout.js';
@@ -105,6 +106,7 @@ export class XrHud {
     this.vfx = new XrVision(this.scene, this.hud); // perception overlay on the face (visionfx.js)
     this.swarm = new XrSwarm(this.scene, this); // spatial QM swarm graph
     this.brain = new XrBrain(this.scene, this.hud); // GBRAIN live feed
+    this.captions = new XrCaptions(this.scene, this.hud); // live transcript strip
     this.mem = new XrMemory(this.scene, this.hud); // Memorable stack under the QM SWARM panel
 
     // Hand pinch (and controller trigger) arrive as `select`.
@@ -254,6 +256,7 @@ export class XrHud {
     safe('xr vision', () => this.vfx.frame(this, head, headQ));
     if (show('swarm3d')) safe('xr swarm', () => this.swarm.frame(head, headQ));
     if (show('brain')) safe('xr brain', () => this.brain.frame(head, headQ, this.meshes, this.dev));
+    safe('xr captions', () => this.captions.frame(head, headQ));
   }
 
   // Normalized camera-frame coords -> world point at `dist` along the ray.

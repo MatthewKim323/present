@@ -5,6 +5,7 @@ import { applyDev, withDeltas } from './devpanels.js';
 import { applyVision } from './visionfx.js';
 import { observeSwarm } from './swarmviz.js';
 import { applyBrain } from './brainpanel.js';
+import { applyCaption } from './captions.js';
 import { applyMemory } from './memorypanel.js';
 import { warnOnce } from './perf.js';
 import { toastFilter, TOAST_MAX } from './layout.js';
@@ -38,6 +39,7 @@ export class HudState {
     const tag = msg.kind || msg.type || '?';
     try { observeSwarm(this, msg); } catch (e) { warnOnce(`swarm ${tag}`, e); } // spatial QM swarm graph (swarmviz.js), read-only
     try { if (applyMemory(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`memory ${tag}`, e); return; } // Memorable: procedure phases + library (memorypanel.js)
+    try { if (applyCaption(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`caption ${tag}`, e); return; } // live captions (captions.js)
     try { if (applyBrain(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`brain ${tag}`, e); return; } // GBRAIN live feed (brainpanel.js)
     try { if (applyDev(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`dev ${tag}`, e); return; } // dev cockpit + context_delta (devpanels.js)
     try { if (applyVision(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`vision ${tag}`, e); return; } // perception overlay: vision / face_capture / relationship_vector (visionfx.js)

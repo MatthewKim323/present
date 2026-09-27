@@ -292,6 +292,9 @@ class WorldService:
         else:
             pid, name, tid = (t.person_id, t.label, t.track_id) if t else (None, None, None)
         self.intro.on_utterance(u)
+        # live caption on the HUD (transient: shown, never stored)
+        who = self.s.wearer_name if getattr(u, "speaker", None) == "wearer" else (name if name and not str(name).upper().startswith("UNKNOWN") else "")
+        await self.hub.broadcast({"kind": "caption", "text": u.text[:200], "who": who})
         closed = self.conv.add_utterance(u, pid, name, tid)
         for enc in closed:
             asyncio.create_task(self._finish_encounter(enc))

@@ -4,6 +4,7 @@ import { drawPersonCardPlus as drawPersonCard, deltasAnimating, DesktopDev } fro
 import { DesktopVision, hideCard } from './visionfx.js';
 import { DesktopSwarm } from './swarmviz.js';
 import { DesktopBrain } from './brainpanel.js';
+import { DesktopCaptions } from './captions.js';
 import { DesktopMemory } from './memorypanel.js';
 import { ANIM_HZ, due, safe, frameBegin, frameEnd } from './perf.js';
 import { deskZones, DESK, show } from './layout.js';
@@ -22,6 +23,7 @@ export class DesktopHud {
     this.vfx = new DesktopVision(hud); // perception overlay (visionfx.js)
     this.swarm = new DesktopSwarm(hud);
     this.brain = new DesktopBrain(hud); // GBRAIN live feed
+    this.captions = new DesktopCaptions(hud); // live transcript strip
     this.mem = new DesktopMemory(hud, this.dev); // Memorable stack under the QM SWARM panel
     window.addEventListener('resize', () => this._resize());
     // Click a card (or a person box) = pinch on that track.
@@ -128,6 +130,7 @@ export class DesktopHud {
     if (show('swarm3d')) safe('desktop swarm', () => this.swarm.draw(ctx, vr));
     safe('desktop dev', () => this.dev.draw(ctx, placed, vr));
     if (show('brain')) safe('desktop brain', () => this.brain.draw(ctx, placed, vr));
+    safe('desktop captions', () => this.captions.draw(ctx, innerWidth, innerHeight));
     if (show('memorable')) safe('desktop memory', () => this.mem.draw(ctx));
     safe('desktop vision', () => this.vfx.draw(ctx, placed, vr, this.hits));
 
