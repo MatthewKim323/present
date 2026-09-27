@@ -141,6 +141,7 @@ def test_proxy_rejects_missing_or_wrong_bearer(proxy):
 def test_proxy_needs_a_configured_secret(proxy, monkeypatch):
     c, *_ = proxy
     monkeypatch.setenv("WORLD_HOOKS_SECRET", "short")
+    monkeypatch.delenv("GBRAIN_PROXY_TOKEN", raising=False)
     assert c.post("/gbrain/query", json={"q": "x"}, headers={"authorization": "Bearer short"}).status_code == 503
 
 
