@@ -174,6 +174,7 @@ export class DesktopHud {
     const placed = new Map();
     const selected = hud.selectedTrack;
     const compact = innerWidth < 900;
+    const compactPreview = document.body.dataset.mode === "preview" && compact;
     const area = this._contentArea();
     const hasDetail =
       hud.view !== "person" || (selected != null && hud.cards.has(selected));
@@ -251,7 +252,7 @@ export class DesktopHud {
     } else if (hud.view === "agents") {
       const msg =
         hud.activity.get(selected) || [...hud.activity.values()].at(-1);
-      detail = msg
+      detail = compactPreview && hud.qmSwarm ? null : msg
         ? anyRunning(msg)
           ? drawAgentActivity(msg)
           : this._raster("activity", msg, drawAgentActivity)
@@ -289,11 +290,18 @@ export class DesktopHud {
       if (hud.view === "person" && selected != null) placed.set(selected, detailRect);
     }
 
-    safe("desktop swarm", () => this.swarm.draw(ctx, vr));
-    safe("desktop dev", () => this.dev.draw(ctx, placed, vr));
-    safe("desktop brain", () => this.brain.draw(ctx, placed, vr));
-    safe("desktop memory", () => this.mem.draw(ctx));
-    safe("desktop vision", () => this.vfx.draw(ctx, placed, vr, this.hits));
+    // The narrow scripted preview already has a heading and chapter controls.
+    // Keep one readable surface there; the full sponsor layers remain in live
+    // desktop and AR, and in wider previews with room for them.
+    if (compactPreview) {
+      if (hud.view === "agents") safe("desktop dev", () => this.dev.draw(ctx, placed, vr));
+    } else {
+      safe("desktop swarm", () => this.swarm.draw(ctx, vr));
+      safe("desktop dev", () => this.dev.draw(ctx, placed, vr));
+      safe("desktop brain", () => this.brain.draw(ctx, placed, vr));
+      safe("desktop memory", () => this.mem.draw(ctx));
+      safe("desktop vision", () => this.vfx.draw(ctx, placed, vr, this.hits));
+    }
 
     // One quiet acknowledgement at a time; older events remain in Memories.
     const toast = hud.liveToasts().at(-1);

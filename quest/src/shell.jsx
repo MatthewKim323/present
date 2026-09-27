@@ -273,7 +273,7 @@ function Shell({ api }) {
             </div>
           </section>
         )}
-        {active && !state.studio && (
+        {active && !state.studio && !(preview && state.previewPhase === 2) && (
           <div className="people-access" aria-label="People in view">
             {state.people.map((person) => (
               <button

@@ -8,7 +8,7 @@ import { HudState } from "./hud.js";
 import { DesktopHud } from "./desktop.js";
 import { XrHud } from "./xr.js";
 import { DEMO_SCRIPT } from "./mock.js";
-import { mockResolve } from './visionfx.js';
+import { mockResolve, VISION_LEAD } from './visionfx.js';
 import {
   listCameras,
   pickCamera,
@@ -185,9 +185,12 @@ function phase(next) {
   phaseTimers = [];
   previewPhase = next;
   hud.apply({ kind: "clear" });
+  // DEMO_SCRIPT shifts the encounter after the face-learning sequence. Chapter
+  // snapshots must use that same timeline or the preview opens with no person.
+  const phaseTime = [1100, 5300, 7500][next] + VISION_LEAD;
   for (const [time, message] of DEMO_SCRIPT) {
     if (message.kind === "track") continue;
-    if (time <= [800, 5200, 6000][next]) hud.apply(mockResolve(message));
+    if (time <= phaseTime) hud.apply(mockResolve(message));
   }
   hud.selectedTrack = "3";
   hud.setView(["person", "memories", "agents"][next]);
@@ -198,8 +201,8 @@ function phase(next) {
     label: "Matthew · simulated",
   });
   if (next === 2) {
-    for (const [time, message] of DEMO_SCRIPT.filter(([time, msg]) => time > 6000 && msg.kind !== 'track'))
-      phaseTimers.push(setTimeout(() => { hud.apply(mockResolve(message)); notify(); }, time - 6000));
+    for (const [time, message] of DEMO_SCRIPT.filter(([time, msg]) => time > phaseTime && msg.kind !== 'track'))
+      phaseTimers.push(setTimeout(() => { hud.apply(mockResolve(message)); notify(); }, time - phaseTime));
   }
   notify();
 }
