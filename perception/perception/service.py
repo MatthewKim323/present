@@ -108,7 +108,9 @@ class WorldService:
                                         people=lambda: {pid: p.name for pid, p in self.store.people.items()}, client=self.live.client)
         self.pinch = PinchAdopter(self.emit, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name)
         self.transcriber: Transcriber | None = transcriber
-        self.vad = EnergyVAD(16000)
+        # far voices (the person across from the wearer) sit well below the wearer's: a lower margin keeps them
+        self.vad = EnergyVAD(16000, margin_db=float(os.environ.get("WORLD_VAD_MARGIN_DB", "6")),
+                             abs_min_db=float(os.environ.get("WORLD_VAD_MIN_DB", "-58")))
         self.source = "quest3s"
         self._latest_frame: tuple[bytes, float] | None = None
         self._frame_event = asyncio.Event()
