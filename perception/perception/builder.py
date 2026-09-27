@@ -65,7 +65,7 @@ class BuilderConfig:
     memorable_url: str = ""
     memorable_key: str = ""
     procedures_dir: Path = DATA_DIR / "procedures"
-    recall_min_score: float = 0.3
+    recall_min_score: float = 0.5
 
     @classmethod
     def from_env(cls) -> "BuilderConfig":
@@ -527,14 +527,14 @@ class ProcedureMemory:
         return out
 
     def recall(self, spec: dict[str, Any]) -> dict[str, Any] | None:
-        q = self._words(self.task_line(spec) + " " + spec.get("request", ""))
+        q = self._words(spec["feature"])
         best, best_s = None, 0.0
         for d in self.load():
             sig = d.get("trigger_signature") or {}
             words = self._words(" ".join([d.get("title", ""), d.get("task", ""), sig.get("summary_text", "")]))
             if not q or not words:
                 continue
-            s = len(q & words) / len(q | words)
+            s = len(q & words) / min(len(q), len(words))  # overlap coefficient
             if s > best_s:
                 best, best_s = d, s
         if best is not None and best_s >= self.cfg.recall_min_score:
