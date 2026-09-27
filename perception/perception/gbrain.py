@@ -324,6 +324,7 @@ class RelState:
     deltas: list[str] = field(default_factory=list)  # newest last
     encounters: int = 0
     hydrated: bool = False
+    reset_at: str | None = None  # set by seed_gbrain --reset: older timeline rows belong to previous takes
 
     MAX_RECENT = 10
     MAX_FACTS = 30
@@ -352,7 +353,7 @@ class RelState:
             "type": "relationship", "title": f"{wearer_name} and {self.name}", "person": self.person_id, "created_by": "world",
             "summary": self.summary, "last_topic": self.last_topic, "sentiment": self.sentiment,
             "last_seen": self.last_seen, "last_seen_where": self.last_seen_where,
-            "encounters": self.encounters or None,
+            "encounters": self.encounters or None, "reset_at": self.reset_at,
         }
         loops = [f"you owe: {x}" for x in self.you_owe] + [f"owes you: {x}" for x in self.owes_you]
         body = (
@@ -386,6 +387,7 @@ class RelState:
         st.sentiment = _clean(fm.get("sentiment"))
         st.last_seen = _clean(fm.get("last_seen"))
         st.last_seen_where = _clean(fm.get("last_seen_where"))
+        st.reset_at = _clean(fm.get("reset_at"))
         try:
             st.encounters = int(fm.get("encounters") or 0)
         except (TypeError, ValueError):
@@ -589,6 +591,7 @@ class GBrainIOSink:
                         loaded.prev_seen, loaded.prev_seen_where = loaded.last_seen, loaded.last_seen_where
                     loaded.last_seen, loaded.last_seen_where = local.last_seen, local.last_seen_where
                 loaded.encounters += local.encounters
+                loaded.reset_at = loaded.reset_at or local.reset_at
             loaded.hydrated = True
             self.rel[pid] = loaded
             self._known_pages.add(self.rel_slug(pid))
@@ -822,13 +825,14 @@ class GBrainIOSink:
     def _seen_before(self, pid: str, st: RelState | None, page: dict[str, Any] | None) -> dict[str, Any] | None:
         """Previous encounter (not the current one): timeline timestamps first, relationship page second."""
         cutoff = self._last_encounter.get(pid, time.time() + 1) - 5
+        floor = _parse_ts(st.reset_at) if st and st.reset_at else None
         best: tuple[float, str | None] | None = None
         for e in (self._timelines.get(pid) or (0, []))[1]:
             summ = str(e.get("summary") or "")
             if not summ.lower().startswith("seen by"):
                 continue
             ts = _parse_ts(e.get("created_at"))
-            if ts is None or ts >= cutoff:
+            if ts is None or ts >= cutoff or (floor is not None and ts < floor):
                 continue
             where = summ.split(" at ", 1)[1] if " at " in summ else None
             if best is None or ts > best[0]:
@@ -837,7 +841,7 @@ class GBrainIOSink:
             ts = _parse_ts(st.prev_seen)
             if ts is not None:
                 best = (ts, st.prev_seen_where)
-        if best is None and page:
+        if best is None and page and floor is None:
             earlier = [x for x in parse_timeline(page.get("timeline") or "") if x["summary"].lower().startswith("seen by") and x["date"] < _today()]
             if earlier:
                 d = max(earlier, key=lambda x: x["date"])

@@ -351,3 +351,22 @@ async def test_seen_before_uses_timeline_timestamps_and_skips_current_encounter(
     sink._person.clear()  # force re-read so the current encounter's own entry is in the timeline
     ctx = await sink.person_context("matthew")
     assert ctx["seen_before"]["ago"] == "2h ago" and ctx["seen_before"]["where"] == "Coffee, Palo Alto"
+    # after a --reset, rows from earlier takes no longer count
+    sink.rel["matthew"].reset_at = mcp.now
+    assert (await sink.person_context("matthew"))["seen_before"] is None
+
+
+def test_seed_files_load_and_reset_stamp():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("seed_gbrain", Path(__file__).parents[1] / "scripts" / "seed_gbrain.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    seeds = mod.load_seeds()
+    assert {"people/matthew", "people/stephen", "relationships/stephen--matthew", "projects/syla", "events/yc-hackathon-2026-09-27"} <= set(seeds)
+    stamped = mod.stamp_reset(seeds["relationships/stephen--matthew"], "2026-09-27T20:00:00Z")
+    fm, body = parse_front(stamped)
+    assert fm["reset_at"] == "2026-09-27T20:00:00Z" and "## Open loops" in body
+    st = RelState.from_page("matthew", "Matthew", {"frontmatter": fm, "compiled_truth": body})
+    assert st.summary is None and st.facts == [] and st.reset_at  # TODO placeholders never reach the card
