@@ -61,6 +61,14 @@ QM  --traces-->  Memorable  (native QM integration)
   "workers": [{ "name": "Context", "state": "running" | "done" | "failed", "note": "searching GBrain" }] }
 ```
 
+Builder (feature_request.detected -> coding agent -> PR): same `agent_activity` shape, one worker named `Builder`, plus optional `job_id` on the message and `url` (Vercel preview) / `pr_url` on the worker once known. Notes go `queued: <feature>` -> `coding: <feature>` / `editing Onboarding.tsx` / `building` / `opening PR` -> `PR #N opened · building preview` -> done `PR #N · preview ready · <url>` (or failed `failed: <reason>`). Before coding, a recalled Memorable procedure shows as `{ "kind": "memory_event", "text": "RECALLED PROCEDURE", "detail": "<title> · <n> steps" }`.
+
+```json
+{ "kind": "agent_activity", "anchor_track_id": 4, "hook": "feature_request.detected", "job_id": "b123451",
+  "workers": [{ "name": "Builder", "state": "done", "note": "PR #3 · preview ready · https://syla-demo-git-....vercel.app",
+                "url": "https://syla-demo-git-....vercel.app", "pr_url": "https://github.com/MatthewKim323/syla-demo/pull/3" }] }
+```
+
 Debug: `/ws/quest?debug=1` also streams `{ "kind": "tracks", "tracks": [{ "track_id", "bbox", "person_id", "label" }] }` for anchoring.
 
 ## Quest -> world service (over /ws/quest)

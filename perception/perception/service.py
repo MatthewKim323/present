@@ -29,6 +29,7 @@ from .faces import FaceEngine, LatencyStat, decode_jpeg
 from .live import RollingExtractor
 from .people import PeopleStore
 from .sinks import FanOut, HudSink, QMSink, StubGBrainSink
+from .builder import Builder, BuilderConfig, BuilderSink, add_builder_routes
 from .vision import VisionPipeline
 
 log = logging.getLogger("world")
@@ -71,7 +72,8 @@ class WorldService:
         self.gbrain = self._make_gbrain(StubGBrainSink(self.s.events_log_path, people_meta=self._people_meta))
         self.qm = QMSink(self.s.qm_url)
         self.hud = HudSink(self.hub.broadcast, gbrain=self.gbrain)
-        self.fanout = FanOut([self.gbrain, self.qm, self.hud])
+        self.builder = Builder(BuilderConfig.from_env(), self.hub.broadcast, anchor=self._track_for)
+        self.fanout = FanOut([self.gbrain, self.qm, self.hud, BuilderSink(self.builder)])
         self.conv = ConversationManager(self.s.conv_gap_s, self.s.leave_grace_s)
         self.extractor = extractor or Extractor(self.s.anthropic_model, self.s.wearer_id, self.s.wearer_name)
         self.live = RollingExtractor(self.emit, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name,
@@ -100,6 +102,13 @@ class WorldService:
 
         log.info("GBrain: hosted gbrain.io (fallback: stub)")
         return make_gbrain_sink(stub, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name, people_meta=self._people_meta)
+
+    def _track_for(self, pid: str | None) -> int | None:
+        for t in self.vision.tracker.tracks.values():
+            if pid and t.person_id == pid:
+                return t.track_id
+        t = self.vision.primary_track()
+        return t.track_id if t else None
 
     def _people_meta(self, pid: str) -> dict:
         p = self.store.people.get(pid)
@@ -298,6 +307,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
 
     app = FastAPI(title="WORLD world service", lifespan=lifespan)
     app.state.svc = svc
+    add_builder_routes(app, svc.builder)
 
     @app.websocket("/ws/quest")
     async def ws_quest(ws: WebSocket):
