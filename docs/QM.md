@@ -22,6 +22,10 @@ Routes live in `deploy/worldhooks/world-hooks.json` (pointed at by `WORLD_HOOKS_
 
 `customer_feedback.detected` ships with three workers: **Context** (who is this person/company via GBrain), **Product** (similar feedback, count customers, draft issue, don't file), **Follow-up** (find the commitment + asset, draft reply, mark awaiting approval, never send). The woken root agent calls QM's native `POST /v1/swarm {"action":"spawn", "requestId":"world:<event id>", "contexts":[...]}`, broadcasts the event, tails replies, and returns one summary.
 
+## Verified locally (2026-09-27)
+
+curl of a `customer_feedback.detected` event -> `202` -> root turn woke in `personal:matt` -> root called `/v1/swarm` spawn -> 3 worker sessions, each on its own local-docker computer -> workers reported back via swarm messages -> root returned: who (Alex, unresolved beyond the event), draft issue "Simplify Canvas onboarding and initial setup", draft reply to Alex, and "awaiting approval: filing the issue and sending the reply. Nothing was sent externally." Context worker could not resolve Alex because GBrain is not wired into QM yet. Harness was `codex` via `~/.codex/auth.json`; roughly 4 minutes wall clock for the whole swarm.
+
 ## Run it locally
 
 ```bash
@@ -31,7 +35,7 @@ cd ~/dev/qm && npm ci
 node --env-file=qm.env src/index.ts
 ```
 
-Minimal `qm.env`: `PORT`, `ORG_ID`, the five distinct secrets (`CORE_SIGNING_SECRET`, `CAPABILITY_SECRET`, `PORTAL_IDENTITY_SECRET`, `CONNECTOR_SECRET_KEY`, `PORTAL_SESSION_SECRET`, plus `SKILL_SIGNING_SECRET`), `DATABASE_URL`, `SESSION_STORE=postgres`, `RUN_STORE=postgres`, `ARTIFACT_STORE=postgres`, `HARNESS` + model auth, `SANDBOX_BACKEND=local`, `PUBLIC_API_URL=http://host.docker.internal:<port>`, `WORLD_HOOKS_FILE`, `WORLD_HOOKS_SECRET`.
+Minimal `qm.env`: `PORT`, `ORG_ID`, the five distinct secrets (`CORE_SIGNING_SECRET`, `CAPABILITY_SECRET`, `PORTAL_IDENTITY_SECRET`, `CONNECTOR_SECRET_KEY`, `PORTAL_SESSION_SECRET`, plus `SKILL_SIGNING_SECRET`), `DATABASE_URL`, `SESSION_STORE=postgres`, `RUN_STORE=postgres`, `ARTIFACT_STORE=postgres`, `HARNESS` + model auth, `SANDBOX_BACKEND=local`, `SANDBOX_RESOURCES_ENABLED=true` (without it swarm workers fail with "sandbox management is disabled"), `PUBLIC_API_URL=http://host.docker.internal:<port>`, `WORLD_HOOKS_FILE`, `WORLD_HOOKS_SECRET`.
 
 ## Memorable
 
