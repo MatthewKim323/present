@@ -354,7 +354,8 @@ export class SwarmSim {
     g.pulseAt = hit;
     s.rings.push({ id: 'gbrain', t0: hit, k: msg.ok === false ? K.bad : K.accent });
     const what = msg.slug ? ' ' + String(msg.slug).split('/').slice(-1)[0] : msg.query ? ` "${String(msg.query).slice(0, 18)}"` : '';
-    const meta = [msg.hits != null ? `${msg.hits} hit${msg.hits === 1 ? '' : 's'}` : '', msg.ms != null ? `${Math.round(msg.ms)}ms` : ''].filter(Boolean).join(' · ');
+    const nHits = Array.isArray(msg.hits) ? msg.hits.length : msg.hits; // contract: hits is a list of {slug, title}
+    const meta = [nHits != null ? `${nHits} hit${nHits === 1 ? '' : 's'}` : '', msg.ms != null ? `${Math.round(msg.ms)}ms` : ''].filter(Boolean).join(' · ');
     const who = m ? m[1] : msg.actor || '';
     const text = `${who ? who + ' ' : ''}${op}${what}${meta ? ' · ' + meta : ''}`;
     s.bghosts.push({ t0: hit, text, canvas: drawGhost(text), uid: `b${now}${Math.random()}` });
