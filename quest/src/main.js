@@ -7,8 +7,8 @@ import { Link } from "./link.js";
 import { HudState } from "./hud.js";
 import { DesktopHud } from "./desktop.js";
 import { XrHud } from "./xr.js";
-import { DEMO_SCRIPT } from "./mock.js";
-import { mockResolve, VISION_LEAD } from './visionfx.js';
+import { DEMO_SCRIPT, PREVIEW_PHASE_TIMES } from "./mock.js";
+import { mockResolve } from './visionfx.js';
 import {
   listCameras,
   pickCamera,
@@ -187,7 +187,7 @@ function phase(next) {
   hud.apply({ kind: "clear" });
   // DEMO_SCRIPT shifts the encounter after the face-learning sequence. Chapter
   // snapshots must use that same timeline or the preview opens with no person.
-  const phaseTime = [1100, 5300, 7500][next] + VISION_LEAD;
+  const phaseTime = PREVIEW_PHASE_TIMES[next];
   for (const [time, message] of DEMO_SCRIPT) {
     if (message.kind === "track") continue;
     if (time <= phaseTime) hud.apply(mockResolve(message));

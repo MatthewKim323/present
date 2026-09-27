@@ -18,6 +18,7 @@ const BASE_SCRIPT = [
 ];
 
 export const DEMO_SCRIPT = [...VISION_SCRIPT, ...BASE_SCRIPT.map(([t, m]) => [t + VISION_LEAD, m])].sort((a, b) => a[0] - b[0]);
+export const PREVIEW_PHASE_TIMES = [1100, 5300, 7500].map(offset => VISION_LEAD + offset);
 
 // ---- current demo, spatial QM swarm (swarmviz.js). Stephen wears the Quest, Matthew asks for
 // a !recap command in Opal's Discord bot -> swarm -> Builder tool calls -> PR #6 -> PROCEDURE LEARNED;
