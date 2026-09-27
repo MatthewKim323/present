@@ -69,7 +69,7 @@ QM  --traces-->  Memorable  (native QM integration)
 `person_card` additive fields from GBrain (optional, older clients ignore them):
 `seen_before: { when: "2026-09-27 12:03", ago: "2h ago", where: "YC hackathon, San Francisco" } | null` (previous encounter, from GBrain timeline timestamps),
 `here: "YC hackathon, San Francisco"` (current situation, `WORLD_SITUATION`),
-`relationship: "early Syla user, wants easier setup"` (1-line summary),
+`relationship: "early Opal user, wants easier setup"` (1-line summary),
 `recent_deltas: ["prefers async demos", ...]` (last 3 learned, newest first).
 
 Builder (feature_request.detected -> coding agent -> PR): same `agent_activity` shape, one worker named `Builder`, plus optional `job_id` on the message and `url` (Vercel preview) / `pr_url` on the worker once known. Notes go `queued: <feature>` -> `coding: <feature>` / `editing Onboarding.tsx` / `building` / `opening PR` -> `PR #N opened · building preview` -> done `PR #N · preview ready · <url>` (or failed `failed: <reason>`). Before coding, a recalled Memorable procedure shows as `{ "kind": "memory_event", "text": "RECALLED PROCEDURE", "detail": "<title> · <n> steps" }`.

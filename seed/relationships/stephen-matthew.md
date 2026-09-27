@@ -4,7 +4,7 @@ title: "Stephen and Matthew"
 person: "matthew"
 created_by: "world"
 seed: "world-demo"
-summary: "TODO(matt): one-line relationship summary, e.g. early Syla user since ..."
+summary: "TODO(matt): one-line relationship summary, e.g. early Opal user since ..."
 ---
 
 # Stephen and Matthew

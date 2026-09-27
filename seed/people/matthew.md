@@ -4,18 +4,18 @@ title: "Matthew"
 subtitle: "TODO(matt): one-line card subtitle, e.g. role · company"
 role: "TODO(matt): role"
 company: "TODO(matt): company"
-relationship: "Syla customer, talks with Stephen in person"
+relationship: "Opal customer, talks with Stephen in person"
 seed: "world-demo"
 ---
 
 # Matthew
 
-Customer persona for the WORLD demo: Matthew uses Syla, the product Stephen is building.
+Customer persona for the WORLD demo: Matthew uses Opal, the product Stephen is building.
 Enrolled (opt-in) for local face recognition on Stephen's headset.
 
 ## About
 
-- TODO(matt): what Matthew does and what he uses Syla for
+- TODO(matt): what Matthew does and what he uses Opal for
 - TODO(matt): how long he has been a user, team size
 
 ## Notes

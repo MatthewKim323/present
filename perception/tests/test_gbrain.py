@@ -108,35 +108,35 @@ async def test_existing_person_page_is_never_overwritten():
 
 async def test_conversation_summary_goes_to_timelines_not_transcript():
     sink, mcp = make_sink()
-    ev = make_event("conversation.completed", {"duration_s": 42, "summary": "Canvas onboarding pain", "speakers": ["stephen", "matthew"], "utterances": 6},
+    ev = make_event("conversation.completed", {"duration_s": 42, "summary": "Opal onboarding pain", "speakers": ["stephen", "matthew"], "utterances": 6},
                     people=[STEPHEN, MATT])
     await sink.emit(ev)
     await sink.flush()
-    assert mcp.timeline["people/matthew"][0]["summary"] == "Talked with Stephen: Canvas onboarding pain"
-    assert mcp.timeline["relationships/stephen-matthew"][0]["summary"].endswith("Canvas onboarding pain")
+    assert mcp.timeline["people/matthew"][0]["summary"] == "Talked with Stephen: Opal onboarding pain"
+    assert mcp.timeline["relationships/stephen-matthew"][0]["summary"].endswith("Opal onboarding pain")
     assert "people/stephen" not in mcp.timeline  # wearer is not a counterpart
     ctx = await sink.person_context("matthew")
-    assert ctx["last"] == "Canvas onboarding pain"
+    assert ctx["last"] == "Opal onboarding pain"
 
 
 async def test_signals_become_pages_with_links_and_open_loops():
     sink, mcp = make_sink()
     await sink.emit(make_event("commitment.detected", {"actor": "Stephen", "recipient": "Matthew", "commitment": "Send updated onboarding demo"},
-                               people=[STEPHEN, MATT], project="syla"))
+                               people=[STEPHEN, MATT], project="opal"))
     await sink.emit(make_event("commitment.detected", {"actor": "Matthew", "recipient": "Stephen", "commitment": "Intro to his CTO"},
-                               people=[STEPHEN, MATT], project="syla"))
-    await sink.emit(make_event("customer_feedback.detected", {"product": "Syla", "feature": "Canvas onboarding", "sentiment": "neg", "feedback": "confusing"},
-                               people=[STEPHEN, MATT], project="syla"))
-    await sink.emit(make_event("feature_request.detected", {"product": "Syla", "feature": "Add onboarding checklist", "request": "show progress", "requested_by": "Matthew"},
-                               people=[STEPHEN, MATT], project="syla"))
+                               people=[STEPHEN, MATT], project="opal"))
+    await sink.emit(make_event("customer_feedback.detected", {"product": "Opal", "feature": "Onboarding", "sentiment": "neg", "feedback": "confusing"},
+                               people=[STEPHEN, MATT], project="opal"))
+    await sink.emit(make_event("feature_request.detected", {"product": "Opal", "feature": "Add onboarding checklist", "request": "show progress", "requested_by": "Matthew"},
+                               people=[STEPHEN, MATT], project="opal"))
     await sink.flush()
     slugs = set(mcp.pages)
     commit = next(s for s in slugs if s.startswith("commitments/") and "send-updated-onboarding-demo" in s)
-    assert any(s.startswith("feedback/") and "syla-canvas-onboarding" in s for s in slugs)
+    assert any(s.startswith("feedback/") and "opal-onboarding-feedback" in s for s in slugs)
     assert any(s.startswith("feature-requests/") and "add-onboarding-checklist" in s for s in slugs)
-    assert "projects/syla" in slugs
+    assert "projects/opal" in slugs
     assert (commit, "people/matthew", "involves") in mcp.links
-    assert (commit, "projects/syla", "about") in mcp.links
+    assert (commit, "projects/opal", "about") in mcp.links
     assert (commit, "events/yc-hackathon-2026-09-27", "happened_at") in mcp.links
     fm, _ = parse_front(mcp.pages[commit])
     assert fm["actor"] == "Stephen" and fm["status"] == "open"
@@ -150,8 +150,8 @@ async def test_signals_become_pages_with_links_and_open_loops():
 
 async def test_relationship_deltas_persist_and_hit_hud():
     sink, mcp = make_sink()
-    ev = make_event("relationship.updated", {"person_id": "matthew", "summary": "early Syla user, wants easier setup",
-                                             "deltas": [{"kind": "preference", "text": "prefers async demos"}, {"kind": "topic", "text": "canvas setup"}]},
+    ev = make_event("relationship.updated", {"person_id": "matthew", "summary": "early Opal user, wants easier setup",
+                                             "deltas": [{"kind": "preference", "text": "prefers async demos"}, {"kind": "topic", "text": "onboarding setup"}]},
                     people=[STEPHEN, MATT])
     sent = []
 
@@ -162,15 +162,15 @@ async def test_relationship_deltas_persist_and_hit_hud():
     await sink.emit(ev)
     await hud.emit(ev)
     await sink.flush()
-    assert [m["text"] for m in sent] == ["+ prefers async demos", "+ canvas setup"]
+    assert [m["text"] for m in sent] == ["+ prefers async demos", "+ onboarding setup"]
     assert all(m["kind"] == "context_delta" and m["person_id"] == "matthew" for m in sent)
     rel = mcp.pages["relationships/stephen-matthew"]
-    assert "- prefers async demos" in rel and "early Syla user" in rel
+    assert "- prefers async demos" in rel and "early Opal user" in rel
     assert mcp.timeline["relationships/stephen-matthew"][0]["summary"].startswith("Learned: prefers async demos")
     ctx = await sink.person_context("matthew")
-    assert ctx["recent_deltas"] == ["canvas setup", "prefers async demos"]
-    assert ctx["relationship"] == "early Syla user, wants easier setup"
-    assert ctx["last"] == "canvas setup"
+    assert ctx["recent_deltas"] == ["onboarding setup", "prefers async demos"]
+    assert ctx["relationship"] == "early Opal user, wants easier setup"
+    assert ctx["last"] == "onboarding setup"
     card = await hud.person_card(enc_event())
     assert card["recent_deltas"] and card["here"] and "you_owe" in card
 
@@ -364,7 +364,7 @@ def test_seed_files_load_and_reset_stamp():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     seeds = mod.load_seeds()
-    assert {"people/matthew", "people/stephen", "relationships/stephen-matthew", "projects/syla", "events/yc-hackathon-2026-09-27"} <= set(seeds)
+    assert {"people/matthew", "people/stephen", "relationships/stephen-matthew", "projects/opal", "events/yc-hackathon-2026-09-27"} <= set(seeds)
     stamped = mod.stamp_reset(seeds["relationships/stephen-matthew"], "2026-09-27T20:00:00Z")
     fm, body = parse_front(stamped)
     assert fm["reset_at"] == "2026-09-27T20:00:00Z" and "## Open loops" in body

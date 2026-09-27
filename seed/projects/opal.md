@@ -1,13 +1,13 @@
 ---
 type: "project"
-title: "Syla"
+title: "Opal"
 owner: "stephen"
 seed: "world-demo"
 ---
 
-# Syla
+# Opal
 
-The product Stephen is building. Customer feedback, feature requests and commitments captured in person
+Opal is Stephen's startup (github.com/qtzx06/opal). Customer feedback, feature requests and commitments captured in person
 by WORLD link here.
 
 - Owner: [[people/stephen]]

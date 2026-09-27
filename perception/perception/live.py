@@ -51,7 +51,7 @@ Kinds:
 - fact: stable fact about {other_name} (role, team size, what they use)
 - preference: how they like things ("prefers async demos")
 - topic: what they are talking about right now
-- sentiment: how {other_name} feels about the product or conversation ("frustrated with canvas setup")
+- sentiment: how {other_name} feels about the product or conversation ("frustrated with setup")
 - shared_context: something both now share (a plan, an intro, an event)
 - open_loop_you_owe: {wearer_name} promised {other_name} something
 - open_loop_owes_you: {other_name} promised {wearer_name} something
