@@ -42,7 +42,7 @@ PROTOCOL_VERSION = "2025-06-18"
 ALLOWED_TOOLS = frozenset({
     "whoami", "put_page", "get_page", "delete_page", "list_pages", "query", "search",
     "add_timeline_entry", "get_timeline", "add_link", "remove_link", "get_links", "get_backlinks",
-    "add_tag", "remove_tag", "get_tags", "remember", "recall", "restore_page",
+    "add_tag", "remove_tag", "get_tags", "remember", "recall", "restore_page", "get_brain_identity",
 })
 
 
