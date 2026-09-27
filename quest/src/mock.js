@@ -45,21 +45,23 @@ const SWARM_TRACKS = Array.from({ length: 48 }, (_, i) => [i * 1000,
   { kind: 'track', track_id: 3, bbox: [0.4 + 0.015 * Math.sin(i / 3), 0.16, 0.2, 0.64], label: 'MATTHEW' }]);
 // GBrain traffic + Memorable lifecycle, so every system visibly connects in the graph.
 const gop = (actor, op, x = {}) => ({ kind: 'gbrain_op', actor, op, ok: true, ...x });
-const PROC = { title: LEARNED.title, steps: LEARNED.steps.length, source: 'qm', gbrain_slug: 'procedures/add-discord-prefix-command' };
+const PROC = { title: LEARNED.title, steps: LEARNED.steps.length, source: 'qm-swarm', gbrain_slug: 'procedures/add-discord-prefix-command' };
 const BRAIN_OPS = [
   [4700, gop('perception', 'get_page', { slug: 'people/matthew', ms: 22 })],
   [5300, gop('qm:Context', 'query', { query: 'Matthew Opal bot', hits: 4, ms: 38 })],
   [5900, gop('qm:Context', 'get_page', { slug: 'relationships/stephen-matthew', ms: 19 })],
   [6700, gop('live', 'add_timeline_entry', { slug: 'relationships/stephen-matthew', ms: 31 })],
   [7100, gop('qm:Product', 'query', { query: 'opal bot commands', hits: 2, ms: 44 })],
-  [7300, { kind: 'procedure', phase: 'recording', source: 'qm', title: null, steps: null }],
+  [7300, { kind: 'procedure', phase: 'recording', source: 'qm-swarm', title: null, steps: null, tool_calls_seen: 1 }],
+  [9800, { kind: 'procedure', phase: 'recording', source: 'qm-swarm', title: null, steps: null, tool_calls_seen: 3 }],
+  [13200, { kind: 'procedure', phase: 'recording', source: 'qm-swarm', title: null, steps: null, tool_calls_seen: 6 }],
   [12600, gop('qm:Builder', 'put_page', { slug: 'projects/opal', ms: 51 })],
-  [16800, { kind: 'procedure', phase: 'extracting', source: 'qm', title: null, steps: null }],
+  [16800, { kind: 'procedure', phase: 'extracting', source: 'qm-swarm', title: null, steps: null }],
   [18100, { kind: 'procedure', phase: 'learned', ...PROC }],
   [28600, gop('qm:Context', 'query', { query: 'Matthew !streak', hits: 5, ms: 36 })],
   [28800, { kind: 'procedure', phase: 'recalled', ...PROC }],
   [29400, gop('perception', 'get_page', { slug: 'people/matthew', ms: 18 })],
-  [30800, { kind: 'procedure', phase: 'recording', source: 'qm', title: null, steps: null }],
+  [30800, { kind: 'procedure', phase: 'recording', source: 'qm-swarm', title: null, steps: null, tool_calls_seen: 2 }],
   [33000, gop('qm:Builder', 'put_page', { slug: 'projects/opal', ms: 47 })],
 ];
 

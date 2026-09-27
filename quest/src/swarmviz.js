@@ -124,7 +124,7 @@ function drawPrLabel(pr) {
 }
 function drawProcCard(p) {
   const steps = Array.isArray(p.steps) ? p.steps : null;
-  const n = steps ? steps.length : Number(p.steps) || 0;
+  const n = p.steps_total || (steps ? steps.length : Number(p.steps) || 0);
   const rows = steps ? steps.slice(0, 5) : [];
   const w = 232, h = 50 + rows.length * 14 + (steps && steps.length > 5 ? 12 : 0) + (p.metrics ? 16 : 0) + 8;
   const [c, g] = mk(w, h);
@@ -136,10 +136,10 @@ function drawProcCard(p) {
   let y = 52;
   rows.forEach((s, i) => {
     txt(g, String(i + 1).padStart(2, ' '), 10, y, { size: 9, font: MONO, color: 'rgba(124,240,197,0.6)' });
-    txt(g, typeof s === 'string' ? s : s.name || s.title || JSON.stringify(s), 28, y, { size: 9.5, color: 'rgba(232,236,240,0.72)', max: w - 38 });
+    txt(g, typeof s === 'string' ? s : s.action ? `${s.action} ${shortTarget(s.target)}`.trim() : s.name || s.title || '', 28, y, { size: 9.5, color: 'rgba(232,236,240,0.72)', max: w - 38 });
     y += 14;
   });
-  if (steps && steps.length > 5) { txt(g, `+${steps.length - 5} more`, 28, y, { size: 9, color: 'rgba(232,236,240,0.4)' }); y += 12; }
+  if (steps && n > 5) { txt(g, `+${n - 5} more`, 28, y, { size: 9, color: 'rgba(232,236,240,0.4)' }); y += 12; }
   if (p.metrics) txt(g, p.metrics, 10, y + 4, { size: 9.5, font: MONO, color: ACCENT, max: w - 20 });
   return c;
 }
@@ -366,7 +366,7 @@ export class SwarmSim {
   // learned = card forms + saved into GBrain, recalled = card flies into Builder, refused = red.
   _procedure(msg, now) {
     const phase = String(msg.phase || '');
-    const p = { title: msg.title || 'procedure', steps: msg.steps ?? 0 };
+    const p = { title: msg.title || 'procedure', steps: msg.steps ?? 0, steps_total: msg.steps_total };
     const s = this.cur;
     if (phase === 'recalled') return this._recall(p, now);
     if (!s) return;
@@ -379,6 +379,8 @@ export class SwarmSim {
     }
     const m = this._memorable(s, Math.max(now, s.t0 + 1.4));
     m.mstate = phase;
+    if (msg.tool_calls_seen != null) m.calls = msg.tool_calls_seen;
+    if (msg.reason) m.reason = String(msg.reason);
     if (phase === 'recording' || phase === 'extracting') {
       const e = this._edge(s, 'builder', 'memorable', Math.max(now, m.bornAt), 0.45, { bend: 0.14 });
       e.pulseUntil = now + (phase === 'recording' ? 40 : 8);
@@ -742,9 +744,10 @@ export class SwarmSim {
       case 'gbrain': key = 'g'; draw = () => drawNodeLabel({ title: 'GBRAIN', sub: 'people · commitments' }); dy = -0.028; break;
       case 'memorable': {
         const lit = !!n.lit, ms = n.mstate || '';
-        const sub = ms === 'recording' ? 'recording trace' : ms === 'extracting' ? 'extracting procedure' : ms === 'refused' ? 'refused' : lit ? 'procedural memory' : null;
+        const sub = ms === 'recording' ? `recording trace${n.calls ? ` · ${n.calls} calls` : ''}` : ms === 'extracting' ? 'extracting procedure'
+          : ms === 'refused' ? `refused${n.reason ? ': ' + n.reason : ''}` : lit ? 'procedural memory' : null;
         const tag = ms === 'recording' ? 'REC' : ms === 'extracting' ? '···' : ms === 'refused' ? '✗' : lit ? '●' : '';
-        key = `m${lit}|${ms}`;
+        key = `m${lit}|${ms}|${n.calls}|${n.reason}`;
         draw = () => drawNodeLabel({ title: 'MEMORABLE', sub, tag, tagK: ms === 'refused' ? K.bad : ms === 'recording' ? K.warn : K.accent });
         ax = 0; ay = 0.5; dx = 0.03; dy = 0.004; break;
       }
