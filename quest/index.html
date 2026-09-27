@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WORLD quest</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <video id="cam" playsinline muted autoplay></video>
+  <canvas id="overlay"></canvas>
+  <div id="ui">
+    <div class="brand">WORLD</div>
+    <div id="status">idle</div>
+    <div class="row">
+      <button id="btn-ar">Enter AR</button>
+      <button id="btn-desktop">Desktop mode</button>
+    </div>
+    <div class="row">
+      <select id="cam-select"></select>
+    </div>
+    <div class="row small">
+      <input id="label-name" placeholder="that's ... (name)" />
+      <input id="label-track" placeholder="track" size="4" />
+      <button id="btn-label">Label</button>
+    </div>
+    <div id="log"></div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

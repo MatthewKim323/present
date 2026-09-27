@@ -1,0 +1,21 @@
+:root { color-scheme: dark; }
+html, body { margin: 0; height: 100%; background: #07080a; color: #e8ecf0;
+  font: 13px/1.4 ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif; overflow: hidden; }
+#cam { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+#overlay { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#ui { position: fixed; top: 12px; left: 12px; width: 300px; padding: 12px; border-radius: 12px;
+  background: rgba(10, 12, 16, 0.72); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.08); }
+#ui.min { width: auto; }
+#ui.min .row, #ui.min #log { display: none; }
+.brand { font-weight: 600; letter-spacing: 0.28em; font-size: 11px; opacity: 0.7; }
+#status { margin: 6px 0 10px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; opacity: 0.85; white-space: pre; }
+.row { display: flex; gap: 6px; margin-bottom: 8px; }
+.row.small input { min-width: 0; }
+button, select, input { font: inherit; color: inherit; background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 6px 10px; }
+button { cursor: pointer; }
+button:hover { background: rgba(255,255,255,0.12); }
+button:disabled { opacity: 0.4; cursor: default; }
+select { flex: 1; min-width: 0; }
+input { flex: 1; }
+#log { max-height: 140px; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 10px; opacity: 0.6; }
