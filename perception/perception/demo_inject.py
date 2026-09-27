@@ -89,6 +89,39 @@ def customer2_events() -> list[dict]:
                                              "Stephen said he'd get it in.")
 
 
+def feature_request_event(spec: dict = FEATURE_REQUEST, anchor_track_id: int | None = None) -> dict:
+    """Just the feature_request.detected (the director's !recap / !streak buttons). QMSink routes it to the swarm."""
+    p = dict(spec)
+    if anchor_track_id is not None:
+        p["anchor_track_id"] = anchor_track_id
+    return make_event("feature_request.detected", p, source=SRC, confidence=0.93, people=PEOPLE, project=PROJECT)
+
+
+LIVE_FACTS = [
+    ("fact", "plays Opal on Discord most nights"),
+    ("preference", "wants to see what Opal remembers"),
+    ("open_loop_owes_you", "bring his squad onto the bot"),
+]
+
+
+def facts_event(deltas: list[tuple[str, str]] = LIVE_FACTS, encounter_id: str = "director") -> dict:
+    """A live relationship.updated pass (what live.py emits mid-conversation): context_delta lines on the card."""
+    return make_event("relationship.updated", {
+        "person_id": "matthew", "deltas": [{"kind": k, "text": t} for k, t in deltas],
+        "summary": "Matthew plays Opal on Discord and wants to see what it remembers about him",
+        "encounter_id": encounter_id, "utterances_seen": 4,
+    }, source=SRC, confidence=0.9, people=[MATT], project=PROJECT)
+
+
+WATCH_INSTRUCTION = "Next time Matthew brings up pricing, prep a counter-offer"
+
+
+def watch_event(instruction: str = WATCH_INSTRUCTION) -> dict:
+    """The wearer sets a standing watch out loud; QM turns it into a WorldWatch."""
+    return make_event("world.watch_requested", {"instruction": instruction, "person_id": "matthew"},
+                      source=SRC, confidence=0.95, people=[STEPHEN, MATT], project=PROJECT)
+
+
 FEEDBACK_LINES = [
     ("other", "Yo, I was playing with Opal on Discord last night. It's actually fun."),
     ("wearer", "Appreciate it. Anything feel off?"),

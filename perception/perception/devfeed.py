@@ -147,7 +147,15 @@ class DevFeed:
         self._previews: dict[str, str] = {}  # head sha -> preview url (only cached once ready)
         self._last_sent: dict[str, str] = {}
         self._last_sent_t: dict[str, float] = {}
+        self.reset_at = 0.0  # director "Reset HUD": settled jobs from before this stop filling the panel
         builder_mod.TOOL_TAPS.append(self.on_tool)
+
+    def reset(self) -> None:
+        """Forget QM swarm lanes and settled Builder jobs for the panel (a running job still shows)."""
+        self.swarms.clear()
+        self._latest_hook = None
+        self._last_sent.clear()
+        self.reset_at = time.time()
 
     def close(self) -> None:
         if self.on_tool in builder_mod.TOOL_TAPS:
@@ -184,7 +192,7 @@ class DevFeed:
                 self.swarms[self._latest_hook][slot] = parse_procedure(str(msg.get("detail") or ""))
 
     def _job(self):
-        jobs = list(self.builder.jobs.values())
+        jobs = [j for j in self.builder.jobs.values() if j.created >= self.reset_at or j.state in ACTIVE]
         if not jobs:
             return None
         active = [j for j in jobs if j.state in ACTIVE]

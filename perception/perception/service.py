@@ -38,6 +38,7 @@ from .gbrain_ops import GBrainOpFeed, add_gbrain_routes
 from .vision import VisionPipeline
 from .intro import IntroEnroller
 from .visionfx import VisionFx
+from .director import add_director_routes
 
 log = logging.getLogger("world")
 
@@ -47,8 +48,14 @@ class Hub:
 
     def __init__(self) -> None:
         self.clients: set[WebSocket] = set()
+        self.taps: list[Any] = []  # sync callables seeing every HUD message (director.py keeps its recent log)
 
     async def broadcast(self, msg: dict[str, Any]) -> None:
+        for tap in self.taps:
+            try:
+                tap(msg)
+            except Exception:  # noqa: BLE001
+                log.exception("hud tap failed")
         data = json.dumps(msg)
         dead = []
         for ws in list(self.clients):
@@ -344,6 +351,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
     add_builder_routes(app, svc.builder)
     add_procedure_routes(app, svc.procfeed)
     add_gbrain_routes(app, lambda: svc.gbrain)  # read-only GBrain for QM workers (WorldHooks bearer)
+    add_director_routes(app, svc)  # /director stage console (director.py)
 
     @app.post("/procedures")
     async def post_procedure(body: dict[str, Any]):

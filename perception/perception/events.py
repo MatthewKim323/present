@@ -20,6 +20,8 @@ EVENT_TYPES = {
     "world.task_requested",
     "object.state_changed",
     "object.last_seen",
+    "world.watch_requested",
+    "world.entity_adopted",
 }
 SOURCES = {"quest3s", "desktop-sim", "manual"}
 
