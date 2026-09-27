@@ -136,7 +136,7 @@ async def test_preview_failure(tmp_path):
     b, sent = make(tmp_path, github=FakeGitHub(preview_state="failure"))
     job = await b.dispatch(None, SPEC)
     await finish(b, job)
-    assert job.state == "failed" and notes(sent)[-1] == ("failed", "PR #7 · preview build failed")
+    assert job.state == "done" and notes(sent)[-1] == ("done", "PR #7 opened · preview unavailable")
 
 
 async def test_timeout(tmp_path):

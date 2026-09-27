@@ -733,9 +733,10 @@ class Builder:
                             job.mark("preview_ready")
                             await self._set(job, "done", f"PR #{job.pr_number} · preview ready · {url}")
                             break
-                        if state == "failure":
+                        if state == "failure":  # the PR is still real; a blocked/failed preview is not a failed job
                             job.error = "preview deployment failed"
-                            await self._set(job, "failed", f"PR #{job.pr_number} · preview build failed")
+                            job.mark("preview_failed")
+                            await self._set(job, "done", f"PR #{job.pr_number} opened · preview unavailable")
                             break
             except Exception as e:  # noqa: BLE001
                 log.warning("builder %s poll error: %s", job.id, e)
@@ -751,7 +752,7 @@ class Builder:
             await asyncio.sleep(self.cfg.poll_s)
         if result is None:
             try:
-                result = await asyncio.wait_for(run_task, 120)
+                result = await asyncio.wait_for(run_task, max(120.0, deadline - time.time()))  # the coder may still be verifying
             except Exception:  # noqa: BLE001
                 result = None
         if result:
