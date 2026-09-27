@@ -139,6 +139,48 @@ a fresh panel. Keep it well under the ws frame limit (JPEG q~0.8, <= ~600 KB).
 
 Debug: `/ws/quest?debug=1` also streams `{ "kind": "tracks", "tracks": [{ "track_id", "bbox", "person_id", "label" }] }` for anchoring.
 
+### Perception overlay (`perception/visionfx.py`, Quest `src/visionfx.js`)
+
+`vision` and `face_capture` go only to clients that asked (`/ws/quest?debug=1` or `?vision=1`), never to `/ws/hud`.
+
+```json
+{ "kind": "vision", "ts": 1727467443.1, "w": 640, "h": 480,
+  "tracks": [{ "track_id": 3, "bbox": [0.38, 0.18, 0.22, 0.30],            // normalized 0-1
+               "landmarks": [[0.44, 0.27], [0.53, 0.27], [0.49, 0.32], [0.45, 0.37], [0.52, 0.37]],  // YuNet: eyes, nose, mouth corners; null if unknown
+               "det_score": 0.93,
+               "state": "detecting" | "matching" | "recognized" | "unknown" | "learning",
+               "person_id": "matthew" | null, "name": "MATTHEW" | "UNKNOWN PERSON 03" | null,
+               "match_score": 0.87, "top_candidates": [{ "name": "Matthew", "score": 0.87 }],   // enrolled set only, max 3
+               "embedding_sig": [0.41, 0.77, ...16],     // fixed random projection of the SFace embedding, squashed 0-1
+               "samples": { "n": 4, "needed": 10 } }] }  // only while learning
+```
+
+~5 Hz while faces are tracked, plus immediately on any state change. `embedding_sig` is a 16-bar visual barcode, not an
+identity key: lossy, never stored, never sent to `/ws/hud`.
+
+```json
+{ "kind": "face_capture", "track_id": 3, "name": "Matthew", "n": 4, "needed": 10, "jpeg_b64": "<96x96 JPEG>" }
+```
+
+One per sample captured while learning a face (the filmstrip). Crops are made in memory, sent once, never persisted
+by the service or the client. Only the embedding goes into `data/people.json`.
+
+```json
+{ "kind": "relationship_vector", "person_id": "matthew", "name": "MATTHEW",
+  "dims": [{ "label": "familiarity", "value": 0.49 }, { "label": "knowledge", "value": 0.3 }, { "label": "topics", "value": 0.33 },
+           { "label": "open loops", "value": 0.25 }, { "label": "warmth", "value": 0.8 }, { "label": "recency", "value": 1.0 }],
+  "facts_count": 3, "last_delta": "prefers async demos" }
+```
+
+Sent to every HUD client after each `person.encountered` (with a person) and each `relationship.updated`, from GBrain's
+relationship state (`relationships/<wearer>-<id>`; stub: this run's events). familiarity = encounters, knowledge = facts,
+topics = topics / conversations, open loops = you owe + owes you, warmth = latest sentiment delta, recency = last seen.
+
+Self-introduction enrollment: when the unknown person in front of the wearer says "I'm X" / "my name is X" / "call me X",
+that is their opt-in. Attribution: explicit speaker tag or clearly quieter than the wearer's mic = start learning; unclear =
+wait for the wearer to greet them by name ("nice to meet you X", which also counts on its own). Learning captures 10 fresh
+samples from that track, then `person.enrolled` + `person.encountered` fire as usual. The `label` message below still works.
+
 ## Quest -> world service (over /ws/quest)
 
 ```json
@@ -153,3 +195,4 @@ Debug: `/ws/quest?debug=1` also streams `{ "kind": "tracks", "tracks": [{ "track
 
 - Recognition only against the local enrolled set. Never external lookup.
 - Frames and audio are processed in memory and dropped. Only WorldEvents persist.
+- A self-introduction counts as opt-in. Learning stores embeddings only; `face_capture` crops are transient HUD pixels, never written.

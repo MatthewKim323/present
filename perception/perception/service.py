@@ -33,6 +33,8 @@ from .sinks import FanOut, HudSink, QMSink, StubGBrainSink
 from .builder import Builder, BuilderConfig, BuilderSink, add_builder_routes
 from .devfeed import DevFeed
 from .vision import VisionPipeline
+from .intro import IntroEnroller
+from .visionfx import VisionFx
 
 log = logging.getLogger("world")
 
@@ -78,6 +80,8 @@ class WorldService:
         self.fanout = FanOut([self.gbrain, self.qm, self.hud, BuilderSink(self.builder)])
         self.devfeed = DevFeed(self.builder, self.hub.broadcast)  # dev cockpit: dev_github / dev_session HUD
         self.conv = ConversationManager(self.s.conv_gap_s, self.s.leave_grace_s)
+        self.visionfx = VisionFx(self)  # vision / face_capture overlay feed (visionfx.py)
+        self.intro = IntroEnroller(self.vision, self.s.wearer_name, self.s.wearer_id)  # "I'm Matthew" = opt-in (intro.py)
         self.extractor = extractor or Extractor(self.s.anthropic_model, self.s.wearer_id, self.s.wearer_name)
         self.live = RollingExtractor(self.emit, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name,
                                      known=getattr(self.gbrain, "known_facts", None), client=False)
@@ -224,6 +228,7 @@ class WorldService:
                         await ws.send_text(dbg)
                     except Exception:  # noqa: BLE001
                         self.debug_clients.discard(ws)
+            await self.visionfx.after_frame(res)
 
     def _process_frame(self, data: bytes, ts: float):
         frame = decode_jpeg(data)
@@ -257,6 +262,7 @@ class WorldService:
             pid, name, tid = partner[0], partner[1], None
         else:
             pid, name, tid = (t.person_id, t.label, t.track_id) if t else (None, None, None)
+        self.intro.on_utterance(u)
         closed = self.conv.add_utterance(u, pid, name, tid)
         for enc in closed:
             asyncio.create_task(self._finish_encounter(enc))
@@ -344,6 +350,8 @@ def create_app(service: WorldService | None = None) -> FastAPI:
         svc.hub.clients.add(ws)
         if debug:
             svc.debug_clients.add(ws)
+        if debug or ws.query_params.get("vision") in ("1", "true"):
+            svc.visionfx.clients.add(ws)
         log.info("quest connected (source=%s debug=%s)", svc.source, debug)
         try:
             while True:
@@ -358,6 +366,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
         finally:
             svc.hub.clients.discard(ws)
             svc.debug_clients.discard(ws)
+            svc.visionfx.clients.discard(ws)
             log.info("quest disconnected")
 
     @app.websocket("/ws/hud")
@@ -383,7 +392,7 @@ def create_app(service: WorldService | None = None) -> FastAPI:
 
     @app.post("/hud")
     async def post_hud(body: dict[str, Any]):
-        kinds = ("person_card", "memory_event", "agent_activity", "context_delta", "dev_github", "dev_session")
+        kinds = ("person_card", "memory_event", "agent_activity", "context_delta", "dev_github", "dev_session", "relationship_vector")
         if body.get("kind") not in kinds:
             raise HTTPException(422, "kind must be one of " + " | ".join(kinds))
         await svc.hub.broadcast(body)

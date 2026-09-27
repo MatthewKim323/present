@@ -53,6 +53,14 @@ uv run python -m perception.enroll --meta matthew role=builder "company=Kali Lab
 
 Live, over the wire: `{"kind":"label","track_id":3,"name":"Matthew"}` ("that's Matthew") captures samples from that track and emits `person.enrolled`. Unknown faces show as `UNKNOWN PERSON NN`.
 
+Self-introduction (`perception/intro.py`): when the unknown person in front of the wearer says "I'm Matthew" / "my name is Matthew" / "call me Matthew", that counts as their opt-in. A regex on the ASR text finds it (no LLM call). If the speaker is clearly the other person (explicit tag, or well below the wearer's mic level) the service learns their face right away: 10 fresh samples from that track over ~2s, then `person.enrolled`. If attribution is unclear it waits up to 30s for the wearer to greet them by name ("nice to meet you Matthew"), which also counts on its own. Intros said by the wearer are ignored. Only embeddings go to `data/people.json`; the 96px crops the headset shows as a filmstrip (`face_capture`) are made in memory, sent once to opted-in HUD clients, never written. Delete anyone with `uv run python -m perception.enroll --remove <id>`.
+
+```bash
+curl -s localhost:8787/debug/utterance -H 'content-type: application/json' -d '{"text":"hey, I'\''m Matthew","speaker":"other"}'
+```
+
+Perception overlay (`perception/visionfx.py`): clients on `/ws/quest?debug=1` or `?vision=1` get `vision` (~5 Hz: bbox, YuNet landmarks, state detecting/matching/recognized/unknown/learning, top enrolled candidates, a 16-bar embedding barcode) and `face_capture`; every HUD client gets `relationship_vector` (radar next to the card). Shapes in `contracts/EVENTS.md`.
+
 ## Desktop sim (no headset)
 
 ```bash

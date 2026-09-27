@@ -162,6 +162,8 @@ async def test_relationship_deltas_persist_and_hit_hud():
     await sink.emit(ev)
     await hud.emit(ev)
     await sink.flush()
+    vec = sent.pop()  # radar: relationship_vector after the deltas (visionfx.py)
+    assert vec["kind"] == "relationship_vector" and vec["facts_count"] == 1 and vec["last_delta"] == "onboarding setup"
     assert [m["text"] for m in sent] == ["+ prefers async demos", "+ onboarding setup"]
     assert all(m["kind"] == "context_delta" and m["person_id"] == "matthew" for m in sent)
     rel = mcp.pages["relationships/stephen-matthew"]

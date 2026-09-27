@@ -17,6 +17,7 @@ from .events import make_event, slug
 from .faces import FaceEngine
 from .people import PeopleStore
 from .tracker import Track, Tracker
+from .visionfx import capture_sample
 
 log = logging.getLogger("world.vision")
 
@@ -32,6 +33,7 @@ class VisionResult:
     events: list[dict[str, Any]] = field(default_factory=list)
     expired: list[Track] = field(default_factory=list)
     tracks: list[dict[str, Any]] = field(default_factory=list)
+    captures: list[dict[str, Any]] = field(default_factory=list)  # transient face crops while learning (visionfx.py), never persisted
     detect_ms: float = 0.0
     embed_ms: float = 0.0
     frame_w: int = 0
@@ -61,9 +63,10 @@ class VisionPipeline:
         self._lock = threading.Lock()
 
     # public API (thread-safe entry points)
-    def request_label(self, track_id: int, name: str) -> None:
+    def request_label(self, track_id: int, name: str, *, fresh: bool = False, samples: int | None = None) -> None:
+        """Start learning a track as `name`. fresh=True ignores buffered embeddings and captures `samples` new ones (self-intro)."""
         with self._lock:
-            self._pending_labels.append((int(track_id), name))
+            self._pending_labels.append((int(track_id), name, fresh, samples))
 
     def process(self, frame: np.ndarray, ts: float | None = None) -> VisionResult:
         ts = time.time() if ts is None else ts
@@ -109,28 +112,31 @@ class VisionPipeline:
     def _apply_labels(self, res: VisionResult) -> None:
         with self._lock:
             pending, self._pending_labels = self._pending_labels, []
-        for track_id, name in pending:
+        for track_id, name, fresh, samples in pending:
             t = self.tracker.tracks.get(track_id)
             if t is None:
                 log.warning("label for unknown track %s (%s) ignored", track_id, name)
                 continue
             t.enroll_name = name.strip()
-            t.enroll_buf = list(t.embeddings)
+            t.enroll_buf = [] if fresh else list(t.embeddings)
+            t.extra["enroll_needed"] = samples or self.enroll_samples
             t.person_id = slug(name)
             t.label = name.strip()
             t.match_score = 1.0
             log.info("enrolling track %s as %s (%d buffered samples)", track_id, name, len(t.enroll_buf))
-            if len(t.enroll_buf) >= self.enroll_samples:
+            if len(t.enroll_buf) >= t.extra["enroll_needed"]:
                 self._finalize_enroll(t, res)
 
     def _identify(self, t: Track, frame: np.ndarray, face, ts: float, res: VisionResult) -> None:
+        t.extra["face"] = face  # landmarks + det score for the vision overlay (visionfx.py)
         if t.enroll_name is not None:
             if ts - t.last_embed_ts >= ENROLL_SAMPLE_GAP_S:
                 emb = self.engine.embed(frame, face)
                 t.last_embed_ts = ts
                 t.embeddings.append(emb)
                 t.enroll_buf.append(emb)
-                if len(t.enroll_buf) >= self.enroll_samples:
+                capture_sample(t, frame, face, res)
+                if len(t.enroll_buf) >= t.extra.get("enroll_needed", self.enroll_samples):
                     self._finalize_enroll(t, res)
             return
         gap = IDENTIFIED_REEMBED_S if t.person_id else UNKNOWN_REEMBED_S

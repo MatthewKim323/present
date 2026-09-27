@@ -13,6 +13,8 @@ from typing import Any, Awaitable, Callable, Protocol
 
 import httpx
 
+from .visionfx import rel_vectors
+
 log = logging.getLogger("world.sinks")
 
 
@@ -160,6 +162,7 @@ class HudSink:
         t = event["type"]
         if t == "person.encountered":
             await self.broadcast(await self.person_card(event))
+            await rel_vectors.on_event(event, self.gbrain, self.broadcast)  # radar beside the card (visionfx.py)
             return
         if t == "relationship.updated":
             # live compounding: each learned delta pops onto the person card
@@ -167,6 +170,7 @@ class HudSink:
             for d in event.get("payload", {}).get("deltas") or []:
                 if d.get("text"):
                     await self.broadcast({"kind": "context_delta", "person_id": pid, "delta_kind": d.get("kind"), "text": f"+ {d['text']}"})
+            await rel_vectors.on_event(event, self.gbrain, self.broadcast)
             return
         text = MEMORY_TEXT.get(t)
         if text:
