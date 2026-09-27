@@ -88,6 +88,7 @@ A customer asks for a concrete product change in person -> `feature_request.dete
 - Progress: polls GitHub (`gh`) every `BUILDER_POLL_S` (4s): PR on the branch, then the Vercel GitHub deployment status of the PR head sha -> preview URL.
 - HUD `agent_activity`, worker `Builder`: `queued: <feature>` -> `coding: <feature>` / `reading X` / `editing X` / `building` / `opening PR` -> `PR #N opened · building preview` -> done `PR #N · preview ready · <url>` (worker also carries `url`, `pr_url`) or failed.
 - Memorable (procedural memory): after a local run the canonical tool trace (names + command/file_path only, never contents) goes to `POST $MEMORABLE_API_URL/v1/extract` (key from `../.env.memorable`). Admitted drafts land in `data/procedures/`. Next job with a similar request recalls the best one (lexical), injects it into the prompt as reference-only, and the HUD shows `RECALLED PROCEDURE · <title> · <n> steps`.
+- HUD `qm_swarm` (`devfeed.py`): one panel per WorldHook run, QM's worker lanes merged with the Builder job (state, last ~6 tool calls, recalled/learned procedure). Without QM it is just the Builder lane.
 - Jobs: `GET /builder/jobs`, `GET /builder/jobs/<id>` (state, PR, preview, timings, tool_calls, turns, cost, procedure).
 
 ```bash
@@ -102,7 +103,7 @@ uv run python -m perception.demo_inject --feature --via-llm   # Matthew asks Ste
 | `ws /ws/quest` | Quest protocol from EVENTS.md. Receives HUD messages. `?source=desktop-sim` sets event source. `?debug=1` also streams `{"kind":"tracks", tracks:[{track_id,bbox,person_id,label,match_score}], detect_ms, embed_ms}` after each frame (non-contract, debug only) |
 | `ws /ws/hud` | HUD messages: `person_card`, `memory_event`, `agent_activity` |
 | `POST /events` | inject a WorldEvent (id/ts filled if missing) -> fanned out to all sinks |
-| `POST /hud` | push a raw HUD message to every HUD client (QM can post `agent_activity` here) |
+| `POST /hud` | push a raw HUD message to every HUD client (QM's swarm tracker posts `agent_activity` here; it also feeds the merged `qm_swarm` panel, see `devfeed.py`) |
 | `GET /health` | status, enrolled people, live tracks, latency (detect, embed/face, frame, ASR, LLM) |
 | `POST /debug/utterance` | `{text, speaker?: wearer\|other, name?, person_id?}` |
 | `POST /builder/dispatch` | `{event_id, spec, repo?, person_id?, anchor_track_id?}` -> start a Builder job (QM's Builder worker calls this) |

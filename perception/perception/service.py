@@ -78,7 +78,7 @@ class WorldService:
         self.hud = HudSink(self.hub.broadcast, gbrain=self.gbrain)
         self.builder = Builder(BuilderConfig.from_env(), self.hub.broadcast, anchor=self._track_for, on_procedure=self.on_procedure)
         self.fanout = FanOut([self.gbrain, self.qm, self.hud, BuilderSink(self.builder)])
-        self.devfeed = DevFeed(self.builder, self.hub.broadcast)  # dev cockpit: dev_github / dev_session HUD
+        self.devfeed = DevFeed(self.builder, self.hub.broadcast)  # dev cockpit: dev_github / qm_swarm HUD
         self.conv = ConversationManager(self.s.conv_gap_s, self.s.leave_grace_s)
         self.visionfx = VisionFx(self)  # vision / face_capture overlay feed (visionfx.py)
         self.intro = IntroEnroller(self.vision, self.s.wearer_name, self.s.wearer_id)  # "I'm Matthew" = opt-in (intro.py)
@@ -392,9 +392,10 @@ def create_app(service: WorldService | None = None) -> FastAPI:
 
     @app.post("/hud")
     async def post_hud(body: dict[str, Any]):
-        kinds = ("person_card", "memory_event", "agent_activity", "context_delta", "dev_github", "dev_session", "relationship_vector")
+        kinds = ("person_card", "memory_event", "agent_activity", "context_delta", "dev_github", "qm_swarm", "relationship_vector")
         if body.get("kind") not in kinds:
             raise HTTPException(422, "kind must be one of " + " | ".join(kinds))
+        svc.devfeed.on_hud(body)  # QM's swarm lanes + recall feed the merged qm_swarm panel
         await svc.hub.broadcast(body)
         return {"ok": True}
 

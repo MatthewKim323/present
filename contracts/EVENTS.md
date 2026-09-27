@@ -84,9 +84,9 @@ Builder (feature_request.detected -> coding agent -> PR): same `agent_activity` 
                 "url": "https://opal-git-....vercel.app", "pr_url": "https://github.com/qtzx06/opal/pull/3" }] }
 ```
 
-### Dev cockpit (GitHub + Claude Code panels, `perception/devfeed.py`)
+### Dev cockpit (GitHub + QM SWARM panels, `perception/devfeed.py`)
 
-The world service owns all GitHub / Claude access; the Quest never holds a token. Both messages are full
+The world service owns all GitHub access; the Quest never holds a token. Both messages are full
 snapshots (replace, don't merge), sent on change and re-sent every ~10s so late clients catch up.
 
 ```json
@@ -98,17 +98,28 @@ snapshots (replace, don't merge), sent on change and re-sent every ~10s so late 
             "hunk_file": "app/src/landing/LandingPage.tsx",
             "hunk": [{ "t": "+" | "-" | " ", "s": "<one source line, <=90 chars>" }] }] }
 
-{ "kind": "dev_session", "job_id": "b123451", "feature": "Add How it works section under hero",
-  "state": "queued" | "running" | "pr_open" | "done" | "failed", "mode": "local" | "cloud",
-  "step": "editing LandingPage.tsx", "tail": [{ "tool": "Edit", "target": "app/src/landing/LandingPage.tsx" }],
-  "elapsed_s": 134, "procedure": { "title": "...", "steps": 8, "score": 0.8 } | null,
-  "session_url": "https://claude.ai/code/..." | null, "pr": 7 | null }
+{ "kind": "qm_swarm", "hook": "feature_request.detected", "event_id": "evt_01J..." | null, "anchor_track_id": 4 | null,
+  "workers": [{ "name": "Context" | "Product" | "Builder" | "...", "state": "running" | "done" | "failed",
+                "note": "Matthew · lifelong friend",
+                "tail": [{ "tool": "Read" | "Edit" | "Bash" | "...", "target": "discord-bot/core/bot.py" }],  // Builder only
+                "elapsed_s": 134, "pr": 6, "pr_url": "https://github.com/qtzx06/opal/pull/6", "url": "<preview>" }],  // Builder only, once known
+  "recalled": { "title": "add discord command", "steps": 5 },   // optional: Memorable procedure recalled for this run
+  "learned": { "title": "add discord command", "steps": 5 } }   // optional: procedure learned from this run (steps may be null)
 ```
 
 `prs`: open PRs on the Builder repo whose title starts with `[WORLD]`, newest first (max 4). Only the newest has a
-non-empty `hunk` (first hunk of the first non-lockfile, a few lines). `tail`: last ~10 tool calls of the live
-builder session, tool name + short target only (path, command head, pattern), never file contents, redacted.
-`session_url` is set when the cloud routine runner is used. Polling runs every ~5s while a Builder job is
+non-empty `hunk` (first hunk of the first non-lockfile, a few lines). `tail`: tool name + short target only (path, command head,
+pattern), never file contents, redacted.
+
+`qm_swarm` is the one panel for the WorldHook swarm (there is no separate Claude Code panel;
+Claude Code is only the engine inside QM's Builder worker, run locally as `claude -p`). The world service merges
+(a) the `agent_activity` QM's swarm tracker POSTs to `/hud` (lanes for Context / Product / ...; `RECALLED
+PROCEDURE` / `PROCEDURE LEARNED` memory_events fill `recalled` / `learned`) with (b) the Builder job from
+`builder.py` (lane state + note, last ~6 tool calls as `tail`, Memorable recall/learn). Keyed by `hook` and
+`event_id` (QM may add `event_id` to its agent_activity; without it a settled swarm that goes running again is
+a new run). The Builder job replaces QM's own `Builder` lane. Without QM (`BUILDER_AUTO=1`) the swarm is just the
+Builder lane. Clients: while a `qm_swarm` with the same `hook` is shown, don't render `agent_activity` for that
+hook (it is still broadcast for older clients). GitHub polling runs every ~5s while a Builder job or swarm is
 active, ~30s otherwise.
 
 Quest -> world service (over /ws/quest), acting on those panels:

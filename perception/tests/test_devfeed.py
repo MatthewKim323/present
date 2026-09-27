@@ -1,9 +1,10 @@
 import asyncio
 import json
+import time
 
 from perception import builder as builder_mod
 from perception.builder import Builder, BuilderConfig, StreamParser
-from perception.devfeed import DevFeed, checks_state, first_hunk, short_target
+from perception.devfeed import DevFeed, checks_state, first_hunk, parse_procedure, short_target
 
 DIFF = """diff --git a/package-lock.json b/package-lock.json
 index 1..2 100644
@@ -104,25 +105,110 @@ def test_github_msg_filters_world_prs_and_hunks_newest():
     feed.close()
 
 
-def test_session_tail_from_stream_parser_tap():
-    feed, b, _ = make()
-    job = builder_mod.Job(id="b1", event_id=None, spec={"feature": "Add How it works section under hero"}, repo="r", branch="w", mode="local",
-                          state="running", note="editing LandingPage.tsx")
-    job.recalled = {"title": "ship feature", "steps": [{}, {}, {}], "score": 0.8}
-    b.jobs["b1"] = job
-    parser = StreamParser("/tmp/clone", on_tool=lambda n, i: [t("b1", n, i) for t in builder_mod.TOOL_TAPS])
+def _job(b, jid="b1", event_id=None, state="running", note="editing core/bot.py", created=None):
+    job = builder_mod.Job(id=jid, event_id=event_id, spec={"feature": "Add !recap command"}, repo="r", branch="w",
+                          state=state, note=note)
+    if created is not None:
+        job.created = created
+    b.jobs[jid] = job
+    return job
+
+
+def _tap(jid, *calls):
+    parser = StreamParser("/tmp/clone", on_tool=lambda n, i: [t(jid, n, i) for t in builder_mod.TOOL_TAPS])
     parser.feed(json.dumps({"type": "assistant", "message": {"content": [
-        {"type": "tool_use", "id": "1", "name": "Edit",
-         "input": {"file_path": "/tmp/clone/app/src/landing/LandingPage.tsx", "old_string": "SECRET CONTENT", "new_string": "x"}},
-        {"type": "tool_use", "id": "2", "name": "Bash", "input": {"command": "npm run build"}}]}}))
-    s = feed.session_msg()
-    assert s["kind"] == "dev_session" and s["state"] == "running" and s["step"] == "editing LandingPage.tsx"
-    assert s["tail"] == [{"tool": "Edit", "target": "app/src/landing/LandingPage.tsx"}, {"tool": "Bash", "target": "npm run build"}]
-    assert "SECRET" not in json.dumps(s)
-    assert s["procedure"] == {"title": "ship feature", "steps": 3, "score": 0.8}
+        {"type": "tool_use", "id": str(k), "name": n, "input": inp} for k, (n, inp) in enumerate(calls)]}}))
+
+
+QM_LANES = {"kind": "agent_activity", "anchor_track_id": 4, "hook": "feature_request.detected", "workers": [
+    {"name": "Context", "state": "done", "note": "Matthew · lifelong friend"},
+    {"name": "Product", "state": "done", "note": "spec: !recap, 2 checks"},
+    {"name": "Builder", "state": "done", "note": "dispatched"}]}
+
+
+def test_builder_only_swarm_when_qm_is_not_running():
+    feed, b, _ = make()
+    job = _job(b, event_id="evt_1")
+    job.anchor_track_id = 3
+    job.recalled = {"title": "add discord command", "steps": [{}] * 5, "score": 0.8}
+    _tap("b1", ("Read", {"file_path": "/tmp/clone/discord-bot/core/bot.py"}),
+         ("Edit", {"file_path": "/tmp/clone/discord-bot/core/bot.py", "old_string": "SECRET CONTENT", "new_string": "x"}),
+         ("Bash", {"command": "cd discord-bot && python3 -m compileall -q core utils"}))
+    s = feed.swarm_msg()
+    assert s["kind"] == "qm_swarm" and s["hook"] == "feature_request.detected" and s["event_id"] == "evt_1"
+    assert s["anchor_track_id"] == 3 and [w["name"] for w in s["workers"]] == ["Builder"]
+    lane = s["workers"][0]
+    assert lane["state"] == "running" and lane["note"] == "editing core/bot.py"
+    assert lane["tail"][:2] == [{"tool": "Read", "target": "discord-bot/core/bot.py"}, {"tool": "Edit", "target": "discord-bot/core/bot.py"}]
+    assert lane["tail"][2]["tool"] == "Bash" and "SECRET" not in json.dumps(s)
+    assert s["recalled"] == {"title": "add discord command", "steps": 5} and "learned" not in s
     assert feed.active()
     feed.close()
     assert feed.on_tool not in builder_mod.TOOL_TAPS
+
+
+def test_tail_keeps_last_six():
+    feed, b, _ = make()
+    _job(b)
+    _tap("b1", *[("Read", {"file_path": f"/tmp/clone/f{i}.py"}) for i in range(9)])
+    assert [e["target"] for e in feed.swarm_msg()["workers"][0]["tail"]] == [f"f{i}.py" for i in range(3, 9)]
+    feed.close()
+
+
+def test_qm_lanes_merge_with_builder_job():
+    feed, b, _ = make()
+    feed.on_hud(QM_LANES)
+    job = _job(b, event_id="evt_2", state="pr_open", note="PR #6 opened · building preview")
+    job.pr_number, job.pr_url = 6, "https://github.com/qtzx06/opal/pull/6"
+    job.procedure = {"stored": True, "title": "add discord command", "steps": 5}
+    s = feed.swarm_msg()
+    assert [w["name"] for w in s["workers"]] == ["Context", "Product", "Builder"]
+    assert s["workers"][0] == {"name": "Context", "state": "done", "note": "Matthew · lifelong friend"}
+    builder = s["workers"][2]
+    assert builder["state"] == "running" and builder["pr"] == 6 and "tail" in builder  # the job, not QM's "dispatched"
+    assert s["anchor_track_id"] == 4 and s["event_id"] == "evt_2"
+    assert s["learned"] == {"title": "add discord command", "steps": 5}
+    feed.close()
+
+
+def test_qm_only_swarm_and_recall_toast():
+    feed, b, _ = make()
+    _job(b, state="done", note="PR #5 · preview ready", created=time.time() - 600)  # an old run
+    feed.on_hud({"kind": "agent_activity", "hook": "customer_feedback.detected", "workers": [
+        {"name": "Context", "state": "running", "note": "searching GBrain"}, {"name": "Follow-up", "state": "bogus"}]})
+    feed.on_hud({"kind": "memory_event", "text": "RECALLED PROCEDURE", "detail": "handle feedback · 7 steps"})
+    s = feed.swarm_msg()
+    assert s["hook"] == "customer_feedback.detected"
+    assert [(w["name"], w["state"]) for w in s["workers"]] == [("Context", "running"), ("Follow-up", "running")]
+    assert s["recalled"] == {"title": "handle feedback", "steps": 7}
+    feed.close()
+
+
+def test_builder_own_agent_activity_is_ignored_and_newer_direct_job_wins():
+    feed, b, _ = make()
+    feed.on_hud({**QM_LANES, "hook": "customer_feedback.detected"})
+    feed.on_hud({"kind": "agent_activity", "hook": "feature_request.detected", "job_id": "b9", "workers": [{"name": "Builder"}]})
+    assert set(feed.swarms) == {"customer_feedback.detected"}
+    _job(b, created=time.time() + 1)
+    s = feed.swarm_msg()
+    assert s["hook"] == "feature_request.detected" and [w["name"] for w in s["workers"]] == ["Builder"]
+    feed.close()
+
+
+def test_new_event_id_resets_the_swarm():
+    feed, _, _ = make()
+    feed.on_hud({**QM_LANES, "event_id": "e1"})
+    feed.on_hud({"kind": "memory_event", "text": "PROCEDURE LEARNED", "detail": "feature_request.detected · 2 workflows"})
+    assert feed.swarm_msg()["learned"] == {"title": "feature_request.detected", "steps": None}
+    feed.on_hud({**QM_LANES, "event_id": "e2", "workers": [{"name": "Context", "state": "running"}]})
+    s = feed.swarm_msg()
+    assert s["event_id"] == "e2" and "learned" not in s and len(s["workers"]) == 1
+    feed.close()
+
+
+def test_parse_procedure():
+    assert parse_procedure("add discord command · 5 steps") == {"title": "add discord command", "steps": 5}
+    assert parse_procedure("x") == {"title": "x", "steps": None}
 
 
 def test_actions_only_for_listed_prs_and_never_merge():

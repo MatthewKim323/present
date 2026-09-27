@@ -42,10 +42,12 @@ def test_post_event_fans_out_to_hud(tmp_path):
 
 
 def test_post_event_rejects_bad_type(tmp_path):
-    _, app = make_app(tmp_path)
+    svc, app = make_app(tmp_path)
     with TestClient(app) as c:
         assert c.post("/events", json={"type": "nope"}).status_code == 422
         assert c.post("/hud", json={"kind": "agent_activity", "hook": "x", "workers": []}).status_code == 200
+        assert "x" in svc.devfeed.swarms  # QM lanes feed the merged qm_swarm panel
+        assert c.post("/hud", json={"kind": "dev_session"}).status_code == 422
 
 
 def test_debug_utterance_and_end(tmp_path):
