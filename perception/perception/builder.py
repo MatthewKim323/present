@@ -58,6 +58,8 @@ class BuilderConfig:
     poll_s: float = 4.0
     timeout_s: float = 900.0
     no_pr_grace_s: float = 20.0  # after the coder exits, how long to wait for a PR before failing
+    preview_grace_s: float = 60.0  # coder done + PR open: how long to wait for a Vercel deployment before finishing without one
+    debounce_s: float = 120.0  # a dispatch with the same feature text as a job this recent reuses that job (QM + director double fire)
     workdir: Path = DATA_DIR / "builder"
     model: str = "claude-sonnet-5"
     claude_bin: str = "claude"
@@ -88,6 +90,8 @@ class BuilderConfig:
             auto=e("BUILDER_AUTO", "0") in ("1", "true", "yes"),
             poll_s=float(e("BUILDER_POLL_S", cls.poll_s)),
             timeout_s=float(e("BUILDER_TIMEOUT_S", cls.timeout_s)),
+            preview_grace_s=float(e("BUILDER_PREVIEW_GRACE_S", cls.preview_grace_s)),
+            debounce_s=float(e("BUILDER_DEBOUNCE_S", cls.debounce_s)),
             workdir=Path(e("BUILDER_WORKDIR", str(cls.workdir))),
             model=e("BUILDER_MODEL", cls.model),
             claude_bin=e("BUILDER_CLAUDE_BIN", cls.claude_bin),
@@ -350,6 +354,18 @@ class StreamParser:
         return notes
 
 
+async def _stop(proc: asyncio.subprocess.Process, grace_s: float = 3.0) -> None:
+    """terminate, then kill: a cancelled runner task must not leave `claude` (or npm/git) running."""
+    if proc.returncode is not None:
+        return
+    proc.terminate()
+    try:
+        await asyncio.wait_for(proc.wait(), grace_s)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+
+
 async def _sh(*args: str, cwd: str | Path | None = None, env: dict[str, str] | None = None, timeout: float = 120) -> tuple[int, str]:
     p = await asyncio.create_subprocess_exec(*args, cwd=cwd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     try:
@@ -357,6 +373,9 @@ async def _sh(*args: str, cwd: str | Path | None = None, env: dict[str, str] | N
     except asyncio.TimeoutError:
         p.kill()
         return 124, "timeout"
+    except asyncio.CancelledError:
+        await _stop(p)
+        raise
     return p.returncode or 0, out.decode(errors="replace")
 
 
@@ -367,6 +386,7 @@ class LocalClaudeRunner:
 
     def __init__(self, cfg: BuilderConfig) -> None:
         self.cfg = cfg
+        self.procs: dict[str, asyncio.subprocess.Process] = {}  # job id -> live `claude` process
 
     def _env(self) -> dict[str, str]:
         env = dict(os.environ)
@@ -420,21 +440,34 @@ class LocalClaudeRunner:
                 "--settings", json.dumps({"attribution": {"commit": "", "pr": ""}, "includeCoAuthoredBy": False})]
         if self.cfg.mcp_config:
             args += ["--mcp-config", self.cfg.mcp_config]
-        proc = await asyncio.create_subprocess_exec(*args, cwd=d, env=self._env(), stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
         parser = StreamParser(str(d.resolve()), on_tool=lambda name, inp: [tap(job.id, name, inp) for tap in TOOL_TAPS])
-        assert proc.stdout is not None
-        async for raw in proc.stdout:
-            for n in parser.feed(raw.decode(errors="replace")):
-                await progress(n)
-        rc = await proc.wait()
-        err = (await proc.stderr.read()).decode(errors="replace")[-300:] if proc.stderr else ""
+        rc, err = await self._stream(job, args, d, parser, progress)
         job.mark("coding_finished")
         info = {**parser.result, "exit_code": rc, "tool_calls": len(parser.trace)}
         if rc != 0 and not parser.trace:
             return RunResult(False, parser.trace, info, error=f"claude exited {rc}: {err}")
         await self._ensure_pr(job, d)
         return RunResult(True, parser.trace, info)
+
+    async def _stream(self, job: Job, args: list[str], cwd: Path, parser: StreamParser, progress: Progress) -> tuple[int, str]:
+        """Run the coder, feeding its stream-json to the parser. Cancelling the task kills the process."""
+        proc = await asyncio.create_subprocess_exec(*args, cwd=cwd, env=self._env(), stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
+        self.procs[job.id] = proc
+        assert proc.stdout is not None
+        try:
+            async for raw in proc.stdout:
+                for n in parser.feed(raw.decode(errors="replace")):
+                    await progress(n)
+            rc = await proc.wait()
+            err = (await proc.stderr.read()).decode(errors="replace")[-300:] if proc.stderr else ""
+            return rc, err
+        except asyncio.CancelledError:
+            log.warning("builder %s: runner cancelled, stopping claude (pid %s)", job.id, proc.pid)
+            await _stop(proc)
+            raise
+        finally:
+            self.procs.pop(job.id, None)
 
     async def _ensure_pr(self, job: Job, d: Path) -> None:
         code, out = await _sh("gh", "pr", "list", "-R", job.repo, "--head", job.branch, "--state", "all", "--json", "number", cwd=d)
@@ -455,8 +488,13 @@ class GitHub(Protocol):
     async def find_pr(self, job: Job, claimed: set[int]) -> dict[str, Any] | None: ...
 
     async def preview(self, repo: str, sha: str) -> tuple[str, str | None]:
-        """-> (pending|success|failure, preview url)"""
+        """-> (pending|success|failure|none, preview url). none = Vercel skipped/canceled it: no preview is coming."""
         ...
+
+
+# GitHub deployment status -> poll state. skipped/canceled/inactive never become success: stop waiting on them.
+DEPLOY_STATES = {"success": "success", "failure": "failure", "error": "failure",
+                 "skipped": "none", "canceled": "none", "cancelled": "none", "inactive": "none"}
 
 
 class GhCli:
@@ -488,7 +526,7 @@ class GhCli:
         if not sts:
             return "pending", None
         s = sts[0]
-        state = {"success": "success", "failure": "failure", "error": "failure"}.get(s.get("state"), "pending")
+        state = DEPLOY_STATES.get(s.get("state"), "pending")
         return state, s.get("environment_url") or s.get("target_url")
 
 
@@ -686,6 +724,14 @@ class Builder:
         self.tasks: dict[str, asyncio.Task] = {}
         self._n = 0
 
+    def _recent_same(self, feature: str) -> Job | None:
+        key = slug(feature)
+        now = time.time()
+        for j in sorted(self.jobs.values(), key=lambda j: j.created, reverse=True):
+            if slug(j.feature) == key and now - j.created < self.cfg.debounce_s:
+                return j
+        return None
+
     def _claimed(self, job: Job) -> set[int]:
         return {j.pr_number for j in self.jobs.values() if j.pr_number and j.id != job.id}
 
@@ -694,6 +740,12 @@ class Builder:
         if event_id and event_id in self.by_event:  # QM and BUILDER_AUTO may both fire for one event
             return self.jobs[self.by_event[event_id]]
         s = normalize_spec(spec)
+        recent = self._recent_same(s["feature"])  # same request under a new event id (QM + director button): one clone, one PR
+        if recent is not None:
+            log.info("builder: %r dispatched again within %.0fs, reusing job %s", s["feature"], self.cfg.debounce_s, recent.id)
+            if event_id:
+                self.by_event[event_id] = recent.id
+            return recent
         self._n += 1
         jid = f"b{int(time.time()) % 100000:05d}{self._n}"
         job = Job(id=jid, event_id=event_id, spec=s, repo=repo or self.cfg.repo,
@@ -783,6 +835,7 @@ class Builder:
         run_task = asyncio.create_task(self.runner.run(job, prompt, lambda n: self._progress(job, n)))
         result: RunResult | None = None
         runner_done_at: float | None = None
+        pr_seen_at: float | None = None
         deadline = job.created + self.cfg.timeout_s
         while True:
             if run_task.done() and result is None:
@@ -798,6 +851,7 @@ class Builder:
                     pr = await self.github.find_pr(job, self._claimed(job))
                     if pr:
                         job.pr_number, job.pr_url, job.head_sha = pr["number"], pr["url"], pr.get("headRefOid")
+                        pr_seen_at = time.time()
                         job.mark("pr_opened")
                         await self._set(job, "pr_open", f"PR #{job.pr_number} opened · checks running")
                 if job.pr_number is not None and self.preview is not None:
@@ -809,15 +863,25 @@ class Builder:
                     if job.head_sha:
                         state, url = await self.github.preview(job.repo, job.head_sha)
                         if state == "success" and url:
-                            if self.cfg.preview_bypass:
+                            bare = url
+                            if self.cfg.preview_bypass:  # the secret opens the page: in `url` only, never in the readable note
                                 url = f"{url}?x-vercel-protection-bypass={self.cfg.preview_bypass}&x-vercel-set-bypass-cookie=true"
                             job.preview_url = url
                             job.mark("preview_ready")
-                            await self._set(job, "done", f"PR #{job.pr_number} · preview ready · {url}")
+                            await self._set(job, "done", f"PR #{job.pr_number} · preview ready · {bare}")
                             break
-                        if state == "failure":  # the PR is still real; a blocked/failed preview is not a failed job
+                        # the PR is still real: a failed, skipped or never-arriving preview is not a failed job, and the
+                        # Memorable record below must still run (run 2 recalls from it)
+                        waited = time.time() - max(runner_done_at or 0.0, pr_seen_at or 0.0)
+                        no_preview = state == "pending" and runner_done_at is not None and waited > self.cfg.preview_grace_s
+                        if state == "failure":
                             job.error = "preview deployment failed"
                             job.mark("preview_failed")
+                        elif state == "none" or no_preview:
+                            job.mark("preview_missing")
+                            log.warning("builder %s: no preview for PR #%s (%s), finishing without one", job.id, job.pr_number,
+                                        "deployment " + state if state != "pending" else f"none after {waited:.0f}s")
+                        if state in ("failure", "none") or no_preview:
                             await self._set(job, "done", f"PR #{job.pr_number} opened")
                             break
             except Exception as e:  # noqa: BLE001

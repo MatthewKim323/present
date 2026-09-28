@@ -90,6 +90,21 @@ summary: one or two sentences, no quotes, no verbatim transcript. project: the m
 """
 
 
+def llm_timeout_s() -> float:
+    return float(os.environ.get("WORLD_LLM_TIMEOUT_S", "15"))
+
+
+def make_anthropic_client() -> Any:
+    """One short-timeout client for extraction, the live pass and the watch parse.
+
+    The SDK default is 600s + 2 retries; the watch parse is awaited inline in the utterance path,
+    so a hung call would stall ASR for minutes.
+    """
+    import anthropic
+
+    return anthropic.AsyncAnthropic(timeout=llm_timeout_s(), max_retries=1)
+
+
 def format_transcript(enc: Encounter) -> str:
     hints = enc.speaker_hints()
     lines = []
@@ -202,10 +217,11 @@ class Extractor:
         self.wearer_id = wearer_id
         self.wearer_name = wearer_name
         self.client = client
-        if self.client is None and os.environ.get("ANTHROPIC_API_KEY"):
-            import anthropic
-
-            self.client = anthropic.AsyncAnthropic()
+        if self.client is None:
+            if os.environ.get("ANTHROPIC_API_KEY"):
+                self.client = make_anthropic_client()
+            else:
+                log.warning("ANTHROPIC_API_KEY unset: no extraction, no live deltas, no watch parse (conversation.completed only)")
         self.last_latency_ms: float | None = None
 
     def build_request(self, enc: Encounter) -> dict[str, Any]:

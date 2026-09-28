@@ -98,3 +98,40 @@ def test_log_folds_duplicates_and_counts_gbrain_ops():
     assert len(log.recent) == 2 and log.recent[0]["n"] == 3
     assert log.counts["gbrain_op"] == 2 and "vision" not in log.counts
     assert summarize({"kind": "qm_swarm", "hook": "h", "workers": [{"name": "Builder", "state": "done"}]}) == "h [Builder:done]"
+
+
+def test_recognized_relabels_open_unknown_encounter(tmp_path, monkeypatch):
+    # Matthew starts talking before recognition: the encounter opens with no person_id, and live.py skips such encounters
+    svc, app, _ = app_with_fake_qm(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        c.post("/director/api/action", json={"action": "intro"})
+        enc = svc.conv.current
+        assert enc is not None and enc.person_id is None
+        c.post("/director/api/action", json={"action": "recognized"})
+        assert svc.conv.current is enc and enc.person_id == "matthew" and enc.name == "Matthew"
+
+
+def test_watch_button_carries_topic_and_person(tmp_path, monkeypatch):
+    # the WATCH ARMED toast detail is built from topic_terms + person_name; the button used to send only the instruction
+    svc, app, qm = app_with_fake_qm(tmp_path, monkeypatch)
+    with TestClient(app) as c, c.websocket_connect("/ws/hud") as hud:
+        hud.receive_json()  # procedure_library
+        c.post("/director/api/action", json={"action": "watch"})
+        assert hud.receive_json() == {"kind": "memory_event", "text": "WATCH ARMED", "detail": "pricing · Matthew"}
+    p = qm.events[0]["payload"]
+    assert p["topic_terms"] == ["pricing"] and p["person_name"] == "Matthew" and p["action"] == "prep a counter-offer" and p["once"]
+
+
+def test_reset_clears_gbrain_memory_and_status_has_health_pills(tmp_path, monkeypatch):
+    svc, app, _ = app_with_fake_qm(tmp_path, monkeypatch)
+    calls = []
+
+    async def reset_memory():
+        calls.append(1)
+
+    svc.gbrain.reset_memory = reset_memory
+    with TestClient(app) as c:
+        c.post("/director/api/action", json={"action": "reset"})
+        s = c.get("/director/api/status").json()
+    assert calls == [1]
+    assert s["llm"] is False and s["asr"] == "NullTranscriber" and s["vision"] is False and s["memorable"] is False

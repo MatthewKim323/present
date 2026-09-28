@@ -120,9 +120,16 @@ WATCH_INSTRUCTION = "Next time Matthew brings up pricing, prep a counter-offer"
 
 
 def watch_event(instruction: str = WATCH_INSTRUCTION) -> dict:
-    """The wearer sets a standing watch out loud; QM turns it into a WorldWatch."""
-    return make_event("world.watch_requested", {"instruction": instruction, "person_id": "matthew"},
-                      source=SRC, confidence=0.95, people=[STEPHEN, MATT], project=PROJECT)
+    """The wearer sets a standing watch out loud; QM turns it into a WorldWatch.
+
+    Same payload shape as the live path (watches.WatchRequester): topic_terms + person_name feed the WATCH ARMED toast.
+    """
+    from .watches import fallback_parse
+
+    parsed = fallback_parse(instruction, {MATT["id"]: MATT["name"]}, (MATT["id"], MATT["name"]))
+    payload = {"instruction": instruction, "topic_terms": parsed["topic_terms"], "action": parsed["action"], "once": parsed["once"],
+               "person_id": MATT["id"], "person_name": MATT["name"]}
+    return make_event("world.watch_requested", payload, source=SRC, confidence=0.95, people=[STEPHEN, MATT], project=PROJECT)
 
 
 FEEDBACK_LINES = [

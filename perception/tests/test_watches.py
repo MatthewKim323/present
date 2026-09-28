@@ -177,6 +177,7 @@ def test_qmsink_forwards_and_reports_response():
         r, _ = requester(None)
         ev = await r.on_utterance(Utterance(0, "next time Matthew brings up pricing, prep a counter-offer", -20, "wearer"))
         await sink.emit(ev)
+        await sink.drain()  # emit is fire-and-forget; the reply lands on the board asynchronously
 
     run(go())
     body, auth, timeout = seen[0]
@@ -194,6 +195,7 @@ def test_service_wiring(tmp_path):
         hud.receive_json()  # procedure_library
         c.post("/debug/utterance", json={"text": "next time Matthew brings up pricing, prep a counter-offer", "speaker": "wearer",
                                          "name": "Matthew", "person_id": "matthew"})
+        assert hud.receive_json()["kind"] == "caption"  # live caption first (transient)
         assert hud.receive_json() == {"kind": "memory_event", "text": "WATCH ARMED", "detail": "pricing · Matthew"}
         assert hud.receive_json()["kind"] == "armed_watches"
         # the instruction was said to the AI: it never reaches conversation extraction (no self-firing commitment)
@@ -213,3 +215,43 @@ def test_service_wiring(tmp_path):
             card = q.receive_json()
             assert card["kind"] == "person_card" and card["agent"]["state"] == "assigned"
         assert c.post("/hud", json={"kind": "watch_fired", "watch_id": "ww_unknown"}).status_code == 200
+
+
+def test_qmsink_emit_never_waits_for_qm():
+    # FanOut.emit is awaited by the frame worker and add_utterance: a slow QM (45s for a watch) must not stall them
+    release = None
+    replies = []
+
+    async def handler(req):
+        await release.wait()
+        return httpx.Response(202, json={"ok": True, "watch": {"id": "ww_1", "once": True}})
+
+    async def on_resp(ev, status, body):
+        replies.append((status, body["watch"]["id"]))
+
+    async def go():
+        nonlocal release
+        release = asyncio.Event()
+        sink = QMSink("http://qm", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)), secret="", on_response=on_resp)
+        ev = {"id": "e1", "type": "world.watch_requested", "payload": {}}
+        await asyncio.wait_for(sink.emit(ev), 0.5)  # returns while QM is still "thinking"
+        assert replies == [] and sink._tasks
+        release.set()
+        await sink.drain()
+        assert replies == [(202, "ww_1")] and not sink._tasks
+
+    run(go())
+
+
+def test_qmsink_post_failure_is_logged_not_raised(caplog):
+    async def go():
+        def boom(req):
+            raise httpx.ConnectError("refused")
+
+        sink = QMSink("http://qm", client=httpx.AsyncClient(transport=httpx.MockTransport(boom)), secret="")
+        await sink.emit({"id": "e2", "type": "person.encountered", "payload": {}})
+        await sink.drain()
+
+    with caplog.at_level("WARNING", logger="world.sinks"):
+        run(go())
+    assert any("QM post failed for person.encountered e2" in r.getMessage() for r in caplog.records)

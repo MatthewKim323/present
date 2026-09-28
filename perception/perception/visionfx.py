@@ -173,15 +173,11 @@ class VisionFx:
 
     def _relabel_encounter(self, res: Any) -> None:
         """A person just learned mid-conversation keeps the same encounter (live extraction then starts)."""
-        cur = getattr(self.svc.conv, "current", None)
-        if cur is None or cur.person_id:
-            return
         for ev in res.events:
             if ev.get("type") != "person.encountered":
                 continue
             p = ev.get("payload", {})
-            if p.get("person_id") and cur.track_id in (None, p.get("track_id")):
-                cur.person_id, cur.name, cur.track_id = p["person_id"], p.get("label"), p.get("track_id")
+            if self.svc.conv.identify(p.get("person_id"), p.get("label"), p.get("track_id")):
                 return
 
 

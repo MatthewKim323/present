@@ -1,7 +1,7 @@
 """Director console: run the demo by hand from the laptop when ASR or recognition flakes on stage.
 
   GET  /director                 the page (plain HTML+JS, director.html); /director?token=... stores the token
-  GET  /director/api/status      last 30 HUD messages, QM swarm lanes, builder jobs, gbrain op count, health bits
+  GET  /director/api/status      last 30 HUD messages, QM swarm lanes, builder jobs, gbrain op count, health bits (llm / asr / vision / memorable)
   POST /director/api/action      {action: recognized | intro | facts | recap | streak | watch | reset | forget_face | reload_people}
 
 Every action goes through the same paths the live pipeline uses: WorldEvents through svc.emit (GBrain, QMSink, HUD,
@@ -113,6 +113,7 @@ class Director:
         svc = self.svc
         if action == "recognized":
             tid = self._anchor()
+            svc.conv.identify("matthew", "Matthew", tid)  # an open UNKNOWN encounter becomes Matthew's (same as a live match)
             svc.conv.person_seen("matthew", "Matthew", time.time())
             return await self._emit(demo.encountered(track_id=tid, score=0.81))
         if action == "intro":
@@ -135,6 +136,7 @@ class Director:
             return await self._emit(demo.watch_event(body.get("instruction") or demo.WATCH_INSTRUCTION))
         if action == "reset":
             svc.devfeed.reset()
+            await svc.gbrain.reset_memory()  # take 2 must not show take 1's in-process deltas (seed_gbrain --reset)
             await svc.hub.broadcast({"kind": "clear"})
             return {"cleared": True}
         if action == "forget_face":
@@ -164,6 +166,10 @@ class Director:
             "hud_clients": len(svc.hub.clients),
             "qm_url": getattr(svc.qm, "base_url", "") or None,
             "builder_auto": bool(svc.builder.cfg.auto),
+            "llm": svc.extractor.client is not None,
+            "asr": type(svc.transcriber).__name__ if svc.transcriber else "loading",
+            "vision": svc.engine is not None,
+            "memorable": bool(getattr(svc.builder.procedures, "configured", False)),
             "actions": list(self.log.actions)[::-1],
         }
 

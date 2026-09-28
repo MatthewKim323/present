@@ -75,6 +75,14 @@ class ConversationManager:
         cur.last_activity = u.ts
         return closed
 
+    def identify(self, person_id: str | None, name: str | None, track_id: int | None) -> bool:
+        """Name the open encounter's partner once a face is recognized: same encounter, live extraction can start."""
+        cur = self.current
+        if cur is None or cur.person_id or not person_id or cur.track_id not in (None, track_id):
+            return False
+        cur.person_id, cur.name, cur.track_id = person_id, name, track_id
+        return True
+
     def person_seen(self, person_id: str | None, name: str | None, ts: float) -> None:
         cur = self.current
         if cur and cur.name is not None and (person_id, name) == (cur.person_id, cur.name):

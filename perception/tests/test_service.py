@@ -102,3 +102,9 @@ def test_vision_identifies_enrolled_and_labels_unknown(rng, tmp_path):
     assert any(e["type"] == "person.enrolled" and e["payload"]["person_id"] == "sam" for e in events)
     assert "sam" in store.people
     assert store.match(unit(stranger_c))[0] == "sam"
+
+
+def test_stub_gbrain_warns_at_startup(tmp_path, caplog):
+    with caplog.at_level("WARNING", logger="world"):
+        make_app(tmp_path)
+    assert [r for r in caplog.records if r.name == "world" and "stub" in r.getMessage() and r.levelname == "WARNING"]

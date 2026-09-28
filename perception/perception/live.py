@@ -19,7 +19,7 @@ from typing import Any, Awaitable, Callable
 
 from .conversation import Encounter
 from .events import make_event
-from .extract import format_transcript
+from .extract import format_transcript, make_anthropic_client
 
 log = logging.getLogger("world.live")
 
@@ -91,9 +91,7 @@ class RollingExtractor:
         if client is False:  # caller wires the client explicitly
             self.client = None
         elif self.client is None and os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("WORLD_LIVE", "1") != "0":
-            import anthropic
-
-            self.client = anthropic.AsyncAnthropic()
+            self.client = make_anthropic_client()
         self.state: _EncState | None = None
         self._busy = False
         self.last_latency_ms: float | None = None

@@ -292,3 +292,74 @@ async def test_local_preview_serves_branch_and_sends_shot(tmp_path):
     assert notes(sent)[-1] == ("done", "PR #7 · preview ready · http://10.0.0.5:4300/")
     shot = [m for m in sent if m.get("kind") == "preview_shot"]
     assert shot and shot[0]["pr"] == 7 and shot[0]["url"] == job.preview_url and shot[0]["jpeg_b64"]
+
+
+async def test_cancel_kills_coder_process(tmp_path):
+    # the Builder timeout cancels the runner task; without this the `claude` child keeps coding (and pushing) after the job failed
+    from perception.builder import Job, LocalClaudeRunner
+
+    runner = LocalClaudeRunner(BuilderConfig(workdir=tmp_path))
+    job = Job(id="j1", event_id=None, spec=normalize_spec(SPEC), repo="o/r", branch="b")
+
+    async def progress(n):
+        pass
+
+    t = asyncio.create_task(runner._stream(job, ["sleep", "30"], tmp_path, StreamParser(), progress))
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if job.id in runner.procs:
+            break
+    proc = runner.procs[job.id]
+    t.cancel()
+    try:
+        await t
+    except asyncio.CancelledError:
+        pass
+    assert proc.returncode is not None and job.id not in runner.procs
+
+
+async def test_debounces_same_feature_under_new_event_id(tmp_path):
+    # QM's dispatch and the director button both fire for one request: a second clone + claude run would race on the branch
+    b, _ = make(tmp_path)
+    j1 = await b.dispatch("evt_1", SPEC)
+    j2 = await b.dispatch("evt_2", {**SPEC, "feature": "  add how it works section under hero "})
+    assert j1 is j2 and len(b.jobs) == 1 and b.by_event["evt_2"] == j1.id
+    await finish(b, j1)
+    b.cfg.debounce_s = 0.0
+    j3 = await b.dispatch("evt_3", SPEC)
+    assert j3 is not j1 and len(b.jobs) == 2
+    await finish(b, j3)
+
+
+async def test_pr_without_preview_finishes_and_still_records(tmp_path):
+    # no Vercel deployment ever shows up: the job must not run to timeout_s and skip Memorable (run 2 needs the record)
+    mem = FakeMemory()
+    b, sent = make(tmp_path, github=FakeGitHub(ready_after=10**9), procedures=mem, timeout_s=5)
+    b.cfg.preview_grace_s = 0.05
+    job = await b.dispatch(None, SPEC)
+    await finish(b, job)
+    assert job.state == "done" and job.error is None and notes(sent)[-1] == ("done", "PR #7 opened")
+    assert "preview_missing" in job.timings and job.timings["preview_missing"] < 2
+    assert mem.recorded == [TRACE] and job.procedure["stored"] is True
+
+
+async def test_skipped_deployment_counts_as_no_preview(tmp_path):
+    b, sent = make(tmp_path, github=FakeGitHub(preview_state="none"))
+    b.cfg.preview_grace_s = 60.0  # not the grace path: the deployment state alone settles it
+    job = await b.dispatch(None, SPEC)
+    await finish(b, job)
+    assert job.state == "done" and job.error is None and notes(sent)[-1] == ("done", "PR #7 opened")
+    from perception.builder import DEPLOY_STATES
+    assert DEPLOY_STATES["skipped"] == "none" and DEPLOY_STATES["canceled"] == "none"
+
+
+async def test_bypass_secret_stays_out_of_the_note(tmp_path):
+    # the note is read aloud on the HUD and in the director log; the bypass secret belongs only in the url that opens the page
+    b, sent = make(tmp_path)
+    b.cfg.preview_bypass = "s3cretbypass"
+    job = await b.dispatch(None, SPEC)
+    await finish(b, job)
+    state, note = notes(sent)[-1]
+    assert (state, note) == ("done", "PR #7 · preview ready · https://opal-git-x.vercel.app")
+    url = sent[-1]["workers"][0]["url"]
+    assert "x-vercel-protection-bypass=s3cretbypass" in url and job.preview_url == url

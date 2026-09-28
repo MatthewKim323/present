@@ -45,6 +45,10 @@
   <span id="gb" class="pill">gbrain ?</span>
   <span id="hud" class="pill">hud 0</span>
   <span id="enr" class="pill">enrolled ?</span>
+  <span id="llm" class="pill">llm ?</span>
+  <span id="asr" class="pill">asr ?</span>
+  <span id="vis" class="pill">vision ?</span>
+  <span id="mem" class="pill">memorable ?</span>
 </header>
 <main>
   <section>
@@ -113,6 +117,10 @@ async function tick() {
     pill($('gb'), g.backend !== 'stub', 'gbrain ' + (g.backend || '?') + ' · ops ' + s.gbrain_ops);
     pill($('hud'), s.hud_clients > 0, 'hud clients ' + s.hud_clients);
     pill($('enr'), true, 'enrolled ' + ((s.enrolled || []).join(',') || 'none') + ' · tracks ' + (s.tracks || []).length);
+    pill($('llm'), !!s.llm, s.llm ? 'llm on' : 'llm off (no ANTHROPIC_API_KEY)');
+    pill($('asr'), !!s.asr && s.asr !== 'loading' && s.asr !== 'NullTranscriber', 'asr ' + (s.asr || '?'));
+    pill($('vis'), !!s.vision, s.vision ? 'vision on' : 'vision off (no models)');
+    pill($('mem'), !!s.memorable, s.memorable ? 'memorable on' : 'memorable off');
     const sw = s.swarm;
     $('swarm').innerHTML = sw ? '<div class="muted">' + esc(sw.hook) + (sw.recalled ? ' · recalled ' + esc(sw.recalled.title) : '') + (sw.learned ? ' · learned ' + esc(sw.learned.title) : '') + '</div>' +
       (sw.workers || []).map((w) => '<div class="lane"><span class="s ' + esc(w.state) + '">' + esc(w.state) + '</span><span><b>' + esc(w.name) + '</b> ' + esc(w.note || '') +

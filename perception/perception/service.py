@@ -153,6 +153,8 @@ class WorldService:
 
         mode = (self.s.gbrain_backend or "").lower()
         if mode == "stub" or (mode != "io" and not configured()):
+            why = "GBRAIN_MODE=stub" if mode == "stub" else "no gbrain.io auth (run python -m perception.gbrain_auth)"
+            log.warning("GBrain: stub backend, %s; person cards come from people.json + this run only", why)
             return stub
         from .gbrain import make_gbrain_sink
 

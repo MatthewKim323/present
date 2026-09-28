@@ -694,6 +694,22 @@ class GBrainIOSink:
     async def warm(self, person_ids: list[str]) -> None:
         await asyncio.gather(*(self._warm_one(pid) for pid in person_ids), return_exceptions=True)
 
+    async def reset_memory(self) -> None:
+        """After `seed_gbrain --reset`: drop this process's relationship state and re-read the seeded pages.
+
+        Without this, take 2's person card starts with take 1's deltas and the encounter debounce hides its arrival.
+        """
+        await self.flush()
+        pids = list(self.rel)
+        self.rel.clear()
+        self._last_encounter.clear()
+        self._person.clear()
+        self._timelines.clear()
+        self._known_pages.clear()  # the reset deleted WORLD-created pages; _ensure_page must look again
+        self._linked.clear()
+        log.info("gbrain memory reset, rehydrating %s", pids)
+        await self.warm(pids)
+
     async def _warm_one(self, pid: str) -> None:
         lock = self._hydrate_locks.setdefault(pid, asyncio.Lock())
         async with lock:  # the card read and the write worker may both hydrate; merge exactly once

@@ -60,6 +60,9 @@ class StubGBrainSink:
             with self.log_path.open("a") as f:
                 f.write(json.dumps(event) + "\n")
 
+    async def reset_memory(self) -> None:
+        """No-op: the stub has no hydrated relationship state (GBrainIOSink.reset_memory is the real one)."""
+
     async def person_context(self, person_id: str) -> dict[str, Any] | None:
         meta = self.people_meta(person_id) or {}
         ctx: dict[str, Any] = {
@@ -103,14 +106,25 @@ class QMSink:
         self.on_response = on_response  # QM's reply (created watch, fired watch ids) -> watches.WatchBoard
         self.client = client or httpx.AsyncClient(timeout=timeout)
         self.secret = secret if secret is not None else os.environ.get("WORLD_HOOKS_SECRET", "")
+        self._tasks: set[asyncio.Task] = set()  # in-flight posts (held so they are not GC'd mid-flight)
 
     async def emit(self, event: dict[str, Any]) -> None:
+        """Fire and forget: FanOut.emit is awaited by the frame and ASR loops, so a slow QM must never block them."""
         if not self.base_url:
             return
+        t = asyncio.create_task(self._post(event))
+        self._tasks.add(t)
+        t.add_done_callback(self._tasks.discard)
+
+    async def _post(self, event: dict[str, Any]) -> None:
         headers = {"authorization": f"Bearer {self.secret}"} if self.secret else {}
         # world.watch_requested makes QM run one model call before it answers
         kw = {"timeout": 45.0} if event["type"] == "world.watch_requested" else {}
-        r = await self.client.post(f"{self.base_url}/world-events", json=event, headers=headers, **kw)
+        try:
+            r = await self.client.post(f"{self.base_url}/world-events", json=event, headers=headers, **kw)
+        except Exception as e:  # noqa: BLE001
+            log.warning("QM post failed for %s %s: %s", event["type"], event.get("id"), e)
+            return
         if r.status_code >= 400:
             log.warning("QM rejected %s: %s %s", event["type"], r.status_code, r.text[:200])
         if self.on_response is not None:
@@ -118,7 +132,15 @@ class QMSink:
                 body = r.json()
             except ValueError:
                 body = None
-            await self.on_response(event, r.status_code, body)
+            try:
+                await self.on_response(event, r.status_code, body)
+            except Exception:  # noqa: BLE001
+                log.exception("QM reply handler failed for %s", event["type"])
+
+    async def drain(self) -> None:
+        """Wait for every in-flight post (tests, shutdown)."""
+        while self._tasks:
+            await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
 
 MEMORY_TEXT = {

@@ -131,3 +131,39 @@ def test_parse_feature_request():
                                 "request": "Show three steps under the hero", "requested_by": "Matthew",
                                 "acceptance": ["Section below the hero", "Three numbered steps"]}
     assert fr[0]["project"] == "opal"
+
+
+def test_anthropic_client_has_a_short_timeout(monkeypatch):
+    # the watch parse is awaited inline in the utterance path: the SDK default (600s, 2 retries) would stall ASR
+    from perception.live import RollingExtractor
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.delenv("WORLD_LLM_TIMEOUT_S", raising=False)
+    x = Extractor(**WEARER)
+    assert x.client.timeout == 15.0 and x.client.max_retries == 1
+    monkeypatch.setenv("WORLD_LLM_TIMEOUT_S", "3")
+    live = RollingExtractor(lambda ev: None)
+    assert live.client.timeout == 3.0 and live.client.max_retries == 1
+
+
+def test_missing_api_key_warns_once_at_startup(monkeypatch, caplog):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with caplog.at_level("WARNING", logger="world.extract"):
+        x = Extractor(**WEARER)
+    assert x.client is None
+    assert [r for r in caplog.records if "ANTHROPIC_API_KEY" in r.getMessage() and r.levelname == "WARNING"]
+
+
+def test_identify_names_open_unknown_encounter():
+    # live extraction skips encounters without a person_id: recognizing Matthew mid-talk must keep the same encounter
+    cm = ConversationManager()
+    cm.add_utterance(Utterance(0.0, "hey"), None, None, None)
+    first = cm.current
+    assert cm.identify("matthew", "Matthew", 4)
+    assert cm.current is first and first.person_id == "matthew" and first.name == "Matthew" and first.track_id == 4
+    assert not cm.identify("sam", "Sam", 5)  # already identified: never re-labelled
+    cm.add_utterance(Utterance(1.0, "yo"), None, None, 7)
+    cm.force_end()
+    cm.add_utterance(Utterance(2.0, "hi"), None, "UNKNOWN PERSON 02", 7)
+    assert not cm.identify("matthew", "Matthew", 8)  # a different tracked face is not this encounter's partner
+    assert cm.identify("matthew", "Matthew", 7)

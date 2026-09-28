@@ -404,3 +404,24 @@ async def test_memorable_procedure_lands_in_gbrain_linked_to_its_origin():
     await sink.procedure_recalled(DRAFT, {"event_id": "evt_2", "people": ["matthew"], "feature": "signup checklist"})
     await sink.flush()
     assert mcp.timeline[slug][-1]["summary"] == "Recalled for: signup checklist"
+
+
+async def test_reset_memory_drops_take_1_and_rehydrates_seeded_pages():
+    # `seed_gbrain --reset` rewrites the pages, but the sink's in-process RelState would keep take 1's deltas on take 2's card
+    sink, mcp = make_sink()
+    await sink.emit(enc_event())
+    await sink.emit(make_event("relationship.updated", {"person_id": "matthew", "summary": "take 1",
+                                                         "deltas": [{"kind": "preference", "text": "prefers async demos"}]},
+                               people=[STEPHEN, MATT]))
+    await sink.flush()
+    assert sink.rel["matthew"].deltas == ["prefers async demos"] and "matthew" in sink._last_encounter
+    seeded = RelState("matthew", "Matthew", summary="early Opal user", facts=["plays on Discord"])
+    mcp.pages["relationships/stephen-matthew"] = seeded.page("Stephen", SIT)  # what the reset seed leaves behind
+    mcp.timeline.clear()
+    await sink.reset_memory()
+    st = sink.rel["matthew"]
+    assert st.hydrated and st.deltas == [] and st.facts == ["plays on Discord"] and st.summary == "early Opal user"
+    assert (await sink.person_context("matthew"))["recent_deltas"] == []
+    await sink.emit(enc_event())  # take 2's first encounter is not debounced away by take 1's
+    await sink.flush()
+    assert len(mcp.timeline["people/matthew"]) == 1
