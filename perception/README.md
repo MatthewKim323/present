@@ -35,7 +35,7 @@ uv run python scripts/seed_gbrain.py --reset     # seed/**.md -> gbrain.io; dele
 
 Pages: `people/<id>` (human-curated, created only if missing, never overwritten), `relationships/<wearer>-<id>` (WORLD-owned: summary, what we know, recent, open loops), `events/<situation>`, `projects/<slug>`, and one page per signal under `feedback/ commitments/ decisions/ feature-requests/ bugs/`, linked to person + project + situation. Encounters (max once per person per 10 min) and conversation summaries become timeline entries; transcripts never leave memory. Writes run on a background queue; relationship state lives in memory (hydrated from GBrain at startup), so `person_context` is instant and the card shows `seen_before`, `here`, `relationship`, `recent_deltas` on top of the 4 base fields. Only memory tools are callable (allowlist in `gbrain.py`).
 
-Edit `seed/people/matthew.md` + `seed/relationships/stephen-matthew.md` (fill the `TODO(matt)` lines; TODO values never show on the HUD), then re-run the seed script.
+Edit `seed/people/matthew.md` + `seed/relationships/stephen-matthew.md` if facts change, then re-run the seed script (a value starting with `TODO` never shows on the HUD).
 
 ## Enroll people (opt-in only)
 
@@ -74,18 +74,18 @@ Grant camera + mic to your terminal app (System Settings > Privacy). In the sim 
 
 ```bash
 uv run python -m perception.demo_inject              # Matthew gives Stephen Opal feedback + a commitment: ready-made events -> POST /events
-uv run python -m perception.demo_inject --feature    # Matthew asks for a "How it works" section under the Opal hero (Builder run 1)
-uv run python -m perception.demo_inject --customer2  # similar second request, "How payouts work" section (Memorable recall, run 2)
+uv run python -m perception.demo_inject --feature    # Matthew asks for a `!recap` command in the Opal Discord bot (Builder run 1)
+uv run python -m perception.demo_inject --customer2  # similar second request, `!streak` command (Memorable recall, run 2)
 uv run python -m perception.demo_inject --via-llm    # same scenarios as utterances, end conversation, real Claude extraction
 ```
 
 ## Builder: live coding from reality
 
-A customer asks for a concrete product change in person -> `feature_request.detected` -> a coding agent ships it as a PR on Opal ([qtzx06/opal](https://github.com/qtzx06/opal), web app in `app/`, Vite + React, Vercel git integration so every PR gets a preview URL; override with `BUILDER_REPO`) -> HUD shows it. Code: `perception/builder.py`.
+A customer asks for a concrete product change in person -> `feature_request.detected` -> a coding agent ships it as a PR on Opal ([qtzx06/opal](https://github.com/qtzx06/opal), Discord bot in `discord-bot/`, `BUILDER_SUBDIR`; override the repo with `BUILDER_REPO`) -> HUD shows it. Code: `perception/builder.py`.
 
 - Trigger: `BUILDER_AUTO=1` (BuilderSink dispatches on the event, no QM needed) or QM's Builder worker calls `POST /builder/dispatch {event_id, spec, repo?}`. Deduped per `event_id`, so both paths firing yields one job.
 - Runner: always local (QM is the execution layer; Claude Code is the engine inside its Builder worker) = fresh clone under `data/builder/<job>/`, `npm install`, headless `claude -p` (stream-json, `--strict-mcp-config`, subscription login: `ANTHROPIC_API_KEY` is stripped unless `BUILDER_USE_API_KEY=1`) on branch `world/<feature>`, agent commits/pushes/opens `[WORLD] <feature>`; if it doesn't, the runner opens the PR.
-- Progress: polls GitHub (`gh`) every `BUILDER_POLL_S` (4s): PR on the branch, then the Vercel GitHub deployment status of the PR head sha -> preview URL.
+- Progress: polls GitHub (`gh`) every `BUILDER_POLL_S` (4s): PR on the branch, then the Vercel GitHub deployment status of the PR head sha -> preview URL. Vercel blocks every `[WORLD]` PR deployment today (git author not on the Vercel team), so the job degrades to done `PR #N opened`; `BUILDER_LOCAL_PREVIEW=1` serves the branch locally (`vite preview` on `BUILDER_PREVIEW_PORT` 4300) and screenshots it for the HUD instead.
 - HUD `agent_activity`, worker `Builder`: `queued: <feature>` -> `coding: <feature>` / `reading X` / `editing X` / `building` / `opening PR` -> `PR #N opened · building preview` -> done `PR #N · preview ready · <url>` (worker also carries `url`, `pr_url`) or failed.
 - Memorable (procedural memory): after a local run the canonical tool trace (names + command/file_path only, never contents) goes to `POST $MEMORABLE_API_URL/v1/extract` (key from `../.env.memorable`). Admitted drafts land in `data/procedures/`. Next job with a similar request recalls the best one (lexical), injects it into the prompt as reference-only, and the HUD shows `RECALLED PROCEDURE · <title> · <n> steps`.
 - HUD `qm_swarm` (`devfeed.py`): one panel per WorldHook run, QM's worker lanes merged with the Builder job (state, last ~6 tool calls, recalled/learned procedure). Without QM it is just the Builder lane.
@@ -93,7 +93,7 @@ A customer asks for a concrete product change in person -> `feature_request.dete
 
 ```bash
 BUILDER_AUTO=1 WORLD_WEARER_ID=stephen WORLD_WEARER_NAME=Stephen uv run python -m perception
-uv run python -m perception.demo_inject --feature --via-llm   # Matthew asks Stephen for a How it works section on the Opal landing page
+uv run python -m perception.demo_inject --feature --via-llm   # Matthew asks Stephen for a !recap command in the Opal Discord bot
 ```
 
 ## Watches and entity agents: reality creates them (`perception/watches.py`)

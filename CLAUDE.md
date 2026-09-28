@@ -30,7 +30,7 @@ Quest camera + mic -> perception (people / conversation / objects) -> WORLD EVEN
   -> GBrain (remember) -> QM WorldHook (act, swarm) -> Memorable (skillify) -> better next time
 ```
 
-World event types: `person.encountered`, `conversation.completed`, `decision.detected`, `commitment.detected`, `customer_feedback.detected`, `physical_bug.detected`, `task.demonstrated`, `object.state_changed`, `object.last_seen`, `world.task_requested`.
+World event types: `person.encountered`, `conversation.completed`, `decision.detected`, `commitment.detected`, `customer_feedback.detected`, `feature_request.detected`, `relationship.updated`, `physical_bug.detected`, `task.demonstrated`, `object.state_changed`, `object.last_seen`, `world.task_requested`, `world.watch_requested`, `world.entity_adopted`.
 
 Events are structured JSON, never transcripts:
 
@@ -48,7 +48,7 @@ Product is **Opal** (Stephen's real startup, github.com/qtzx06/opal, web app in 
 1. **Stephen** (founder) wears the Quest. He looks at **Matthew** (matt, enrolled, an Opal customer). OpenCV (YuNet + SFace, local) recognizes him; HUD person card comes from GBrain: relationship to Stephen, last seen (timeline timestamps, "2h ago at YC hackathon"), open loops.
 2. They talk. Nobody talks to the AI. During the conversation a rolling pass ships relationship deltas into GBrain (`relationships/stephen-matthew`) and the HUD shows `context_delta` lines: the card compounds live.
 3. Matthew suggests a concrete Opal change -> `feature_request.detected` (plus feedback / commitments).
-4. QM WorldHook swarm (Context / Product / Builder) spins up, status anchored on the HUD. Builder runs Claude Code as its engine (local headless `claude -p`, no cloud routines; QM is the interface) -> PR `[WORLD] <feature>` on qtzx06/opal + Vercel preview URL on the HUD. Never merged.
+4. QM WorldHook swarm (Context / Product / Builder) spins up, status anchored on the HUD. Builder runs Claude Code as its engine (local headless `claude -p`, no cloud routines; QM is the interface) -> PR `[WORLD] <feature>` on qtzx06/opal + the PR and diff hunk on the HUD (Vercel previews are blocked on this repo). Never merged.
 5. Memorable records the QM swarm trace and the Claude Code builder trace (cross-harness).
 6. Second similar request -> recall fires off the real-world event (no typed prompt) -> HUD `RECALLED PROCEDURE` + run 1 vs run 2 metrics. **Real measured numbers only.**
 

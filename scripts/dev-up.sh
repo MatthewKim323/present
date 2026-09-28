@@ -35,8 +35,8 @@ case "${1:-up}" in
     exit 0 ;;
   status)
     curl -s "localhost:$WORLD_PORT/health" | python3 -c 'import sys,json;h=json.load(sys.stdin);print("world  ok · gbrain",h["gbrain"],"· enrolled",h["enrolled"],"· qm",h["qm_url"])' 2>/dev/null || echo "world  down"
-    curl -skf -o /dev/null "https://localhost:5173/" && echo "quest  ok" || echo "quest  down"
-    curl -sf -o /dev/null "localhost:8091/" && echo "qm     ok" || echo "qm     down (or not on :8091)"
+    { curl -skf -o /dev/null "https://localhost:5173/" || curl -sf -o /dev/null "http://localhost:5173/"; } && echo "quest  ok" || echo "quest  down"
+    curl -sf -o /dev/null "localhost:8091/healthz" && echo "qm     ok" || echo "qm     down (or not on :8091)"
     exit 0 ;;
 esac
 

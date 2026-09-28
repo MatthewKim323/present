@@ -10,6 +10,8 @@ Researched 2026-09-27 (hackathon day). **V** = verified against a primary source
 
 ## A) GBrain: which brain
 
+> **Superseded 2026-09-27: we use hosted gbrain.io** (own OAuth client, `perception/.env.gbrain`), see `docs/HANDOFF.md` "GBrain decision". The local demo brain on :3232 below was abandoned; the research is kept as is.
+
 ### What matt has today (V, inspected via MCP + disk, read-only)
 
 | Thing | Value |

@@ -10,7 +10,7 @@
         "quest/scripts/world-mcp.mjs"
       ],
       "env": {
-        "WORLD_URL": "http://127.0.0.1:8790"
+        "WORLD_URL": "http://127.0.0.1:8787"
       }
     }
   }

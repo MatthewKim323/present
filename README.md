@@ -79,7 +79,7 @@ Only what is in the code today.
 - **Swarm tracker**: follows root + workers in Postgres, streams `agent_activity` to the HUD, measures each run (turns, tool calls, failed calls, wall time), keeps reports at `GET /world-runs`, and posts an honest run 1 vs run 2 line (it says `NO GAIN` when there isn't one).
 - **WorldWatches**: standing watches over world events. Saying "next time Matthew brings up pricing, prep a counter-offer" becomes a watch with one model call (verified live).
 - **Entity-bound agents**: pinch a person or object in the headset and it gets one persistent QM thread (`world:entity:<kind>:<id>`) that every later event about it lands in.
-- **Builder**: the Builder worker dispatches to the world service, which runs headless Claude Code on the target repo and opens a `[WORLD]` PR. Real PRs from this path: [qtzx06/opal #5, #6, #7](https://github.com/qtzx06/opal/pulls).
+- **Builder**: runs in the world service (`BUILDER_AUTO=1` dispatches on the event; QM's Builder worker dispatches to the same `POST /builder/dispatch`, deduped per event), which runs headless Claude Code on the target repo and opens a `[WORLD]` PR. Real PRs: [qtzx06/opal #5 and #6](https://github.com/qtzx06/opal/pulls) are open; #7 to #12 were closed after measurement runs.
 
 ### Memorable
 
@@ -128,7 +128,7 @@ scripts/cast-quest.sh --record # mirror + record the headset view over USB (scrc
 | `perception/` | world service (Python, FastAPI): faces, ASR, extraction, live pass, GBrain sink, QM sink, Builder, HUD fanout |
 | `quest/` | WebXR client (three.js + Vite): capture, HUD, dev cockpit, swarm graph, perception overlay |
 | `seed/` | demo GBrain pages (people, relationships, project, event) |
-| `scripts/` | `dev-up.sh`, `cast-quest.sh` |
+| `scripts/` | `dev-up.sh`, `take.sh` (pre-take checklist), `cast-quest.sh`, `teammate-setup.sh` (second laptop, no QM) |
 | `docs/` | [QM.md](docs/QM.md) (fork + measured runs), [SPONSORS.md](docs/SPONSORS.md), [HANDOFF.md](docs/HANDOFF.md), [DEVPOST.md](docs/DEVPOST.md), [PITCH.md](docs/PITCH.md) |
 | `~/dev/qm` (separate repo) | QM fork, branch `worldhooks` |
 

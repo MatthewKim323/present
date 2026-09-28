@@ -302,9 +302,9 @@ submitted to `POST /hud` with `"kind": "panel"`.
 ```json
 {
   "op": "show",
-  "id": "follow-up-alex",
+  "id": "follow-up-matthew",
   "type": "commitment",
-  "title": "Send Alex the demo",
+  "title": "Send Matthew the demo",
   "meta": "Tomorrow",
   "actions": [{ "id": "done", "label": "Done" }],
   "ttl_ms": 60000
@@ -329,7 +329,7 @@ selections are kept only in memory and are lost when the service restarts.
 Quest selections use:
 
 ```json
-{"kind":"panel_action","panel_id":"follow-up-alex","action_id":"done","request_id":"unique-request-id"}
+{"kind":"panel_action","panel_id":"follow-up-matthew","action_id":"done","request_id":"unique-request-id"}
 ```
 
 The service verifies the active panel and action, then broadcasts
@@ -349,7 +349,7 @@ only: **neither an approval panel nor its acknowledgement executes external
 work**. The calling agent remains responsible for interpreting the selected
 action and performing any separately authorized operation.
 
-`{ "kind": "panel_dismiss", "panel_id": "follow-up-alex" }` sent over the
+`{ "kind": "panel_dismiss", "panel_id": "follow-up-matthew" }` sent over the
 Quest socket dismisses that panel for every connected client.
 - A self-introduction counts as opt-in. Learning stores embeddings only; `face_capture` crops are transient HUD pixels, never written.
 
@@ -364,9 +364,9 @@ submitted to `POST /hud` with `"kind": "panel"`.
 ```json
 {
   "op": "show",
-  "id": "follow-up-alex",
+  "id": "follow-up-matthew",
   "type": "commitment",
-  "title": "Send Alex the demo",
+  "title": "Send Matthew the demo",
   "meta": "Tomorrow",
   "actions": [{ "id": "done", "label": "Done" }],
   "ttl_ms": 60000
@@ -391,7 +391,7 @@ selections are kept only in memory and are lost when the service restarts.
 Quest selections use:
 
 ```json
-{"kind":"panel_action","panel_id":"follow-up-alex","action_id":"done","request_id":"unique-request-id"}
+{"kind":"panel_action","panel_id":"follow-up-matthew","action_id":"done","request_id":"unique-request-id"}
 ```
 
 The service verifies the active panel and action, then broadcasts
@@ -411,5 +411,5 @@ only: **neither an approval panel nor its acknowledgement executes external
 work**. The calling agent remains responsible for interpreting the selected
 action and performing any separately authorized operation.
 
-`{ "kind": "panel_dismiss", "panel_id": "follow-up-alex" }` sent over the
+`{ "kind": "panel_dismiss", "panel_id": "follow-up-matthew" }` sent over the
 Quest socket dismisses that panel for every connected client.

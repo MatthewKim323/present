@@ -55,7 +55,9 @@ fi
 [ "$QMOK" = 1 ] && ok "QM up $QM" || bad "QM down at $QM (cd $QM_DIR && scripts/world-dev.sh up, log .logs/qm.log)"
 
 # 2. docker networks ----------------------------------------------------
-if [ -x "$QM_DIR/scripts/world-dev.sh" ]; then
+if [ -x "$QM_DIR/scripts/world-dev.sh" ] && ! grep -qE '^\s*gc\)' "$QM_DIR/scripts/world-dev.sh"; then
+  warn "$QM_DIR/scripts/world-dev.sh has no gc command (git -C $QM_DIR pull), skipped docker gc"
+elif [ -x "$QM_DIR/scripts/world-dev.sh" ]; then
   if fix "world-dev.sh gc"; then
     if out="$(cd "$QM_DIR" && scripts/world-dev.sh gc 2>&1)"; then ok "docker gc · $(echo "$out" | tail -1)"; else bad "docker gc failed: $(echo "$out" | tail -1)"; fi
   else
@@ -135,7 +137,10 @@ if [ -n "$H" ]; then
   busy="$(curl -sf -m 5 "$WORLD/builder/jobs" | python3 -c 'import sys,json;print(sum(j["state"] in ("queued","running","pr_open") for j in json.load(sys.stdin)))' 2>/dev/null)"
   [ "${busy:-0}" = 0 ] && ok "Builder idle" || warn "Builder has $busy job(s) still running"
 fi
-curl -skf -m 3 -o /dev/null "https://localhost:5173/" && ok "Quest client dev server https://localhost:5173" || bad "Quest client down (scripts/dev-up.sh, log .logs/quest.log)"
+# https by default, plain http with NO_HTTPS=1 (quest/README.md, adb reverse)
+if curl -skf -m 3 -o /dev/null "https://localhost:5173/"; then ok "Quest client dev server https://localhost:5173"
+elif curl -sf -m 3 -o /dev/null "http://localhost:5173/"; then ok "Quest client dev server http://localhost:5173 (NO_HTTPS)"
+else bad "Quest client down (scripts/dev-up.sh, log .logs/quest.log)"; fi
 HUDN="$(echo "$H" | hj 'h["hud_clients"]')"
 [ "${HUDN:-0}" -gt 0 ] 2>/dev/null && ok "HUD clients connected: $HUDN" || warn "no HUD client connected yet (headset not in the page?)"
 if command -v adb >/dev/null; then

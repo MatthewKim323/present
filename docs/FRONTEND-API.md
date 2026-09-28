@@ -17,7 +17,7 @@ Sending a panel from the drawer connects the live HUD first. The server replays 
 
 ## Agent tools
 
-The project `.mcp.json` now includes the local `world` stdio server. Start the MCP client with the repository as its working directory and reload its project MCP configuration. Node 20+ is required. Existing hosted GBrain configuration is preserved. The checked-in local entry currently points at port 8790, matching the isolated backend used by the running frontend on 5175; change it to your actual world-service address for live sponsor work. The CLI default remains 8787.
+The project `.mcp.json` now includes the local `world` stdio server. Start the MCP client with the repository as its working directory and reload its project MCP configuration. Node 20+ is required. Existing hosted GBrain configuration is preserved. The checked-in local entry points at port 8787, the world service default; change `WORLD_URL` if yours runs elsewhere.
 
 ```
 WORLD_URL=http://127.0.0.1:8787 node quest/scripts/world-mcp.mjs
@@ -35,6 +35,6 @@ Frontend tests cover every HTTP method/body, errors, cancellation, MCP discovery
 
 ## Local QM connection
 
-WORLD on port 8790 now forwards authenticated requests to local QM on 8091. The **qm** tab reads runs, watches, and entity agents and supports explicit watch creation/removal and entity adoption. The browser calls `/qm/*` using a separate `WORLD_QM_ACCESS_TOKEN` bearer credential entered in service → qm; the hook secret stays in the backend. If that browser credential is unset, routes fail closed with 503. New routes: GET `/qm/runs`, GET/POST `/qm/watches`, DELETE `/qm/watches/{id}`, GET `/qm/entities`, POST `/qm/entities/adopt`.
+WORLD on port 8787 now forwards authenticated requests to local QM on 8091. The **qm** tab reads runs, watches, and entity agents and supports explicit watch creation/removal and entity adoption. The browser calls `/qm/*` using a separate `WORLD_QM_ACCESS_TOKEN` bearer credential entered in service → qm; the hook secret stays in the backend. If that browser credential is unset, routes fail closed with 503. New routes: GET `/qm/runs`, GET/POST `/qm/watches`, DELETE `/qm/watches/{id}`, GET `/qm/entities`, POST `/qm/entities/adopt`.
 
-The local QM instance uses a fresh Postgres database on port 55433 and the Codex harness. Start it with `/Users/stephenhung/dev/qm/.runtime/start.sh`. Bridge configuration is in ignored `.env.world-mcp`; run `node --env-file=.env.world-mcp quest/scripts/world-mcp-http.mjs`. No secret values belong in frontend files or these docs. The earlier isolated integration-test service had GBrain and live perception disabled; check the current `/health` before relying on either.
+The local QM instance uses a fresh Postgres database on port 55433 (container `world-qm-postgres`) and the `pi` harness on claude-sonnet-5. Start it with `~/dev/qm/scripts/world-dev.sh up`. Bridge configuration is in ignored `.env.world-mcp`; run `node --env-file=.env.world-mcp quest/scripts/world-mcp-http.mjs`. No secret values belong in frontend files or these docs. The earlier isolated integration-test service had GBrain and live perception disabled; check the current `/health` before relying on either.

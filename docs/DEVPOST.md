@@ -35,7 +35,7 @@ Present is a reality layer for personal AI. You wear a Meta Quest 3S (our dev ki
 
 ## Accomplishments that we're proud of
 
-- A real conversation turns into a real PR with no typed prompt ([qtzx06/opal #5, #6, #7](https://github.com/qtzx06/opal/pulls)).
+- A real conversation turns into a real PR with no typed prompt ([qtzx06/opal #5 and #6](https://github.com/qtzx06/opal/pulls), opened by the Builder in the world service; QM's Builder worker dispatches to the same endpoint).
 - A new QM trigger type (WorldHooks) plus WorldWatches you can set by speaking.
 - Procedural memory recorded and recalled off real-world events, and bridged into GBrain so declarative and procedural memory link up.
 - Privacy by construction: opt-in by self-introduction, local embeddings only, no footage persisted.

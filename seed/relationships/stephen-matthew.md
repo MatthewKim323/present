@@ -24,4 +24,9 @@ Friends since 2019 (same SoCal friend group). In 2026 they became co-builders: h
 
 ## Recent
 
+- 2026-09-26: Opal Discord bot demo, Matthew asked how it remembers past sessions
+
 ## Open loops
+
+- you owe: send Matthew the !recap screenshots
+- owes you: the Opal Discord server invite
