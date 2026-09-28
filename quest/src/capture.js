@@ -38,7 +38,7 @@ export async function openCamera(deviceId) {
 
 export async function openMic() {
   return navigator.mediaDevices.getUserMedia({
-    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true }, // keep the person across from the wearer: suppression treats them as noise
     video: false,
   });
 }

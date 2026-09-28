@@ -225,7 +225,7 @@ function Shell({ api }) {
                 <p>
                   {preview
                     ? [
-                        "Alex is a fictional demo contact. Select the label to explore the context.",
+                        "Matthew is a simulated encounter. Select the label to explore the context.",
                         "Feedback and a promise, captured as two useful memories.",
                         "Three agents turn the conversation into context and drafts.",
                       ][state.previewPhase]
@@ -652,7 +652,7 @@ function Shell({ api }) {
                             setName(e.target.value);
                             setEnrolled(false);
                           }}
-                          placeholder="e.g. Alex"
+                          placeholder="e.g. Matthew"
                         />
                       </label>
                       <label className="field-label track-field">

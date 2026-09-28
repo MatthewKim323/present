@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { HudState } from "../src/hud.js";
+import { TOAST_MAX } from "../src/layout.js";
 
 test('work cards share available surface slots with summoned panels', () => {
   const hud = new HudState();
@@ -37,7 +38,7 @@ test("memory history survives toast expiration and retains the newest 30", () =>
   const hud = new HudState();
   for (let i = 0; i < 35; i++)
     hud.apply({ kind: "memory_event", text: `memory ${i}` });
-  assert.equal(hud.toasts.length, 3);
+  assert.equal(hud.toasts.length, TOAST_MAX);
   assert.equal(hud.memoryHistory.length, 30);
   assert.equal(hud.memoryHistory[0].text, "memory 5");
   for (const toast of hud.toasts) toast.t = performance.now() - 5000;

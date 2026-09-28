@@ -126,7 +126,9 @@ class WorldService:
                                         people=lambda: {pid: p.name for pid, p in self.store.people.items()}, client=self.live.client)
         self.pinch = PinchAdopter(self.emit, wearer_id=self.s.wearer_id, wearer_name=self.s.wearer_name)
         self.transcriber: Transcriber | None = transcriber
-        self.vad = EnergyVAD(16000)
+        # far voices (the person across from the wearer) sit well below the wearer's: a lower margin keeps them
+        self.vad = EnergyVAD(16000, margin_db=float(os.environ.get("WORLD_VAD_MARGIN_DB", "6")),
+                             abs_min_db=float(os.environ.get("WORLD_VAD_MIN_DB", "-58")))
         self.source = "quest3s"
         self._latest_frame: tuple[bytes, float] | None = None
         self._frame_event = asyncio.Event()
@@ -324,6 +326,16 @@ class WorldService:
         else:
             pid, name, tid = (t.person_id, t.label, t.track_id) if t else (None, None, None)
         self.intro.on_utterance(u)
+        # live caption on the HUD (transient: shown, never stored)
+        # who spoke, by loudness: the wearer's mic is at their mouth (loud, close); the person across is quieter
+        from .intro import attribute
+        self._cap_levels = (getattr(self, "_cap_levels", []) + [u.rms_db])[-12:]
+        side, _ = attribute(getattr(u, "speaker", None), u.rms_db, self._cap_levels)
+        other = name if name and not str(name).upper().startswith("UNKNOWN") else "Them"
+        if side == "unclear":  # not enough level history yet: louder than the running median = wearer
+            side = "wearer" if u.rms_db >= sorted(self._cap_levels)[len(self._cap_levels) // 2] else "other"
+        who = self.s.wearer_name if side == "wearer" else other
+        await self.hub.broadcast({"kind": "caption", "text": u.text[:200], "who": who})
         closed = self.conv.add_utterance(u, pid, name, tid)
         for enc in closed:
             asyncio.create_task(self._finish_encounter(enc))

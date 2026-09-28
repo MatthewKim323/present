@@ -2,8 +2,10 @@ import { applyDev, withDeltas } from "./devpanels.js";
 import { applyVision } from "./visionfx.js";
 import { observeSwarm } from './swarmviz.js';
 import { applyBrain } from './brainpanel.js';
+import { applyCaption } from './captions.js';
 import { applyMemory } from './memorypanel.js';
 import { warnOnce } from './perf.js';
+import { toastFilter, TOAST_MAX } from './layout.js';
 import {
   applyPanelCommand,
   livePanels,
@@ -90,11 +92,12 @@ export class HudState {
     const bad = oversized(msg);
     if (bad) { warnOnce(`drop ${msg.kind}: ${bad}`); return; }
     const tag = msg.kind || msg.type || '?';
-    try { observeSwarm(this, msg); } catch (e) { warnOnce(`swarm ${tag}`, e); }
-    try { if (applyMemory(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`memory ${tag}`, e); return; }
-    try { if (applyBrain(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`brain ${tag}`, e); return; }
-    try { if (applyDev(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`dev ${tag}`, e); return; }
-    try { if (applyVision(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`vision ${tag}`, e); return; }
+    try { observeSwarm(this, msg); } catch (e) { warnOnce(`swarm ${tag}`, e); } // spatial QM swarm graph (swarmviz.js), read-only
+    try { if (applyMemory(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`memory ${tag}`, e); return; } // Memorable: procedure phases + library (memorypanel.js)
+    try { if (applyCaption(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`caption ${tag}`, e); return; } // live captions (captions.js)
+    try { if (applyBrain(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`brain ${tag}`, e); return; } // GBRAIN live feed (brainpanel.js)
+    try { if (applyDev(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`dev ${tag}`, e); return; } // dev cockpit + context_delta (devpanels.js)
+    try { if (applyVision(this, msg)) { this.touch(); return; } } catch (e) { warnOnce(`vision ${tag}`, e); return; } // perception overlay: vision / face_capture / relationship_vector (visionfx.js)
     try { this._applyCore(msg); } catch (e) { warnOnce(`hud ${tag}`, e); }
   }
 
@@ -127,13 +130,15 @@ export class HudState {
         this.watches = Array.isArray(msg.items) ? msg.items : [];
         for (const [k, c] of this.cards) this.cards.set(k, { ...c, watching: this._watching(c.person_id) });
         break;
-      case "memory_event":
+      case "memory_event": {
         if (!validText(msg.text) || !validText(msg.detail, true)) return;
-        const memory = { text: msg.text, detail: msg.detail, t: now() };
+        if (!toastFilter(this, msg)) return; // duplicates a panel's own animation (layout.js)
+        const memory = { text: msg.text, detail: msg.detail == null ? '' : msg.detail, t: now() };
         this.toasts.push(memory);
         this.memoryHistory = [...this.memoryHistory, memory].slice(-30);
-        this.toasts = this.toasts.slice(-3);
+        this.toasts = this.toasts.slice(-TOAST_MAX); // one line at a time: the newest replaces the last
         break;
+      }
       case "agent_activity":
         if (
           !validId(msg.anchor_track_id, true) ||
@@ -171,6 +176,7 @@ export class HudState {
         this.activity.clear();
         this.tracks.clear();
         this.toasts = [];
+        this._toastSeen = null;
         this.panels.clear();
         this.workPanels = [];
         this.workPage = 0;

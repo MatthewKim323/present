@@ -7,7 +7,7 @@ import { Link } from "./link.js";
 import { HudState } from "./hud.js";
 import { DesktopHud } from "./desktop.js";
 import { XrHud } from "./xr.js";
-import { DEMO_SCRIPT, PREVIEW_PHASE_TIMES } from "./mock.js";
+import { DEMO_SCRIPT, PREVIEW_PHASE_TIMES, runMock } from "./mock.js";
 import { mockResolve } from './visionfx.js';
 import {
   listCameras,
@@ -39,6 +39,7 @@ let studio = false,
 let previewPhase = 0,
   previewTimer,
   phaseTimers = [],
+  stopMock = null,
   muted = false;
 const logs = [];
 const listeners = new Set();
@@ -156,8 +157,25 @@ function statusLine() {
 }
 function stopPreview() {
   clearInterval(previewTimer);
+  previewTimer = null;
   phaseTimers.forEach(clearTimeout);
   phaseTimers = [];
+  stopMock?.();
+  stopMock = null;
+}
+// Keep the simulated person's track fresh (bboxFor goes stale after 4 s).
+function startTrackPulse() {
+  clearInterval(previewTimer);
+  previewTimer = setInterval(
+    () =>
+      hud.apply({
+        kind: "track",
+        track_id: 3,
+        bbox: [0.35, 0.32, 0.16, 0.35],
+        label: "Matthew · simulated",
+      }),
+    1000,
+  );
 }
 function stopCapture() {
   cameraLocalOnly = false;
@@ -183,6 +201,10 @@ function setMode(next) {
 function phase(next) {
   phaseTimers.forEach(clearTimeout);
   phaseTimers = [];
+  // A chapter button takes over from the full ?mock=1 timeline.
+  stopMock?.();
+  stopMock = null;
+  startTrackPulse();
   previewPhase = next;
   hud.apply({ kind: "clear" });
   // DEMO_SCRIPT shifts the encounter after the face-learning sequence. Chapter
@@ -217,18 +239,14 @@ async function preview() {
   hud.net = null;
   error = "";
   setMode("preview");
-  phase(0);
   showDesktop();
-  previewTimer = setInterval(
-    () =>
-      hud.apply({
-        kind: "track",
-        track_id: 3,
-        bbox: [0.35, 0.32, 0.16, 0.35],
-        label: "Matthew · simulated",
-      }),
-    1000,
-  );
+  if (config.mock) {
+    // ?mock=1: the whole scripted timeline (vision -> card -> swarm -> PR -> Memorable), looping,
+    // so the headset HUD plays the demo too. ?mockseq= is applied inside mock.js. The chapter
+    // buttons (phase) still work: they stop the loop and pin a chapter.
+    previewPhase = 0;
+    stopMock = runMock((message) => { hud.apply(message); notify(); });
+  } else phase(0);
 }
 async function startCapture(deviceId) {
   const stream = await openCamera(deviceId);
@@ -298,31 +316,37 @@ async function live() {
   busy = true;
   error = "";
   notify();
-  // AudioContext must be resumed synchronously in the user gesture.
-  if (config.audio && !audioCtx) {
-    audioCtx = new AudioContext();
-    audioCtx.resume().catch(() => {});
-  }
-  stopPreview();
-  studio = false;
-  if (mode !== "live") hud.apply({ kind: "clear" });
-  setMode("live");
-  ensureLink();
-  showDesktop();
   try {
-    if (config.video) {
-      await startCapture();
-      const best = pickCamera(cameras, config.camHint);
-      if (best?.label && best.label !== camLabel)
-        await startCapture(best.deviceId);
+    // AudioContext must be resumed synchronously in the user gesture.
+    if (config.audio && !audioCtx) {
+      audioCtx = new AudioContext();
+      audioCtx.resume().catch(() => {});
     }
+    stopPreview();
+    studio = false;
+    if (mode !== "live") hud.apply({ kind: "clear" });
+    setMode("live");
+    ensureLink();
+    showDesktop();
+    try {
+      if (config.video) {
+        await startCapture();
+        const best = pickCamera(cameras, config.camHint);
+        if (best?.label && best.label !== camLabel)
+          await startCapture(best.deviceId);
+      }
+    } catch (e) {
+      error = `camera unavailable: ${e.message}. check browser permissions or use the preview.`;
+      log(error);
+    }
+    await startMic();
   } catch (e) {
-    error = `camera unavailable: ${e.message}. check browser permissions or use the preview.`;
+    error = `could not go live: ${e.message}`;
     log(error);
+  } finally {
+    busy = false;
+    notify();
   }
-  await startMic();
-  busy = false;
-  notify();
 }
 async function enterAR() {
   if (busy || xr) return;
@@ -584,7 +608,9 @@ const emulated = config.emulate
 emulated
   .then(() => XrHud.supported())
   .then((ok) => {
-    arSupported = ok;
+    // Never lock AR out on a headset: some Quest Browser builds under-report support. Try anyway, log why.
+    arSupported = ok || isQuest;
+    if (!ok) log(`immersive-ar supported=${ok} xr=${!!navigator.xr} secure=${isSecureContext}`);
     notify();
   })
   .catch((e) => log(e.message));

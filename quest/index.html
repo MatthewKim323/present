@@ -7,12 +7,17 @@
   <meta name="description" content="WORLD. Stay in the moment. Keep the context." />
   <title>WORLD — a little more present</title>
   <link rel="stylesheet" href="/src/style.css" />
+  <style>
+    /* WebXR dom-overlay root (xr.js). Empty on purpose: nothing from the page is composited over passthrough. */
+    #xr-dom:empty { display: none; }
+  </style>
 </head>
 <body>
   <div id="scene" aria-hidden="true"></div>
   <video id="cam" playsinline muted autoplay aria-label="Live camera feed"></video>
   <canvas id="overlay" aria-hidden="true"></canvas>
   <div id="app-shell"></div>
+  <div id="xr-dom"></div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

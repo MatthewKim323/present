@@ -9,6 +9,8 @@
 //   xr.js       XrBrain: frame(head, headQ, meshes, dev) after XrDev
 // swarmviz.js consumes gbrain_op on its own (observeSwarm runs before this); nothing here touches it.
 import * as THREE from 'three';
+import { ANIM_HZ, due } from './perf.js';
+import { BRAIN_LINES, XR, xrAt, xrGraph } from './layout.js';
 
 const FONT = 'ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif';
 const MONO = 'ui-monospace, Menlo, monospace';
@@ -22,7 +24,7 @@ const S = 2;
 const W = 240;
 const HEAD_H = 30;
 const LINE_H = 31;
-const MAX_LINES = 8;
+const MAX_LINES = BRAIN_LINES; // layout.js: 5 in ?hud=demo, 8 in full
 const IN_MS = 360;     // slide + fade in
 const LIFE_MS = 14000; // then fade out over the last 2s
 const OUT_MS = 2000;
@@ -190,14 +192,13 @@ export class DesktopBrain {
     if (!hud.brain || (!lines.length && !placed.size)) return;
     const pulse = hud.brain.pulse;
     const key = hud.brain.v;
-    if (!this.cache || this.cache.key !== key || animating(lines, pulse, t)) this.cache = { key, c: drawBrainPanel(lines, pulse, t) };
-    const c = this.cache.c, w = c.width / S, h = c.height / S;
-    // its own column, left of the dev cockpit's left column (GitHub / QM SWARM / Memorable sit 340px left of the face)
-    const [id, card] = [...placed.entries()][0] || [];
-    const b = id != null ? hud.bboxFor(id) : null;
-    const colLeft = b ? vr.x + b[0] * vr.w - 16 - 340 : card ? card.x - 16 - 340 : innerWidth / 2;
-    let x = colLeft - 14 - w;
-    let y = card ? card.y : 96;
+    // redraw on change, or at <= ANIM_HZ while lines slide / fade (perf.js)
+    if (!this.cache || this.cache.key !== key || (animating(lines, pulse, t) && due(this.cache, ANIM_HZ, t))) this.cache = { key, c: drawBrainPanel(lines, pulse, t), _drawT: t };
+    const z = hud.ld, k = z ? z.k : 1;
+    const c = this.cache.c, w = (c.width / S) * k, h = (c.height / S) * k;
+    // far left rail (layout.js), under the control panel
+    const [, card] = [...placed.entries()][0] || [];
+    let x = z ? z.brain.x : 16, y = z ? z.brain.y : 96;
     x = Math.max(8, Math.min(innerWidth - w - 8, x));
     y = Math.max(8, Math.min(innerHeight - h - 8, y));
     ctx.drawImage(c, x, y, w, h);
@@ -278,19 +279,17 @@ export class XrBrain {
     const card = [...meshes.entries()].find(([k]) => k.startsWith('card:') || k.startsWith('label:'))?.[1] || meshes.get('detail:person');
     if (!hud.brain || (!lines.length && !card)) { this._drop(); this.link.material.opacity = 0; return; }
     const pulse = hud.brain.pulse;
-    const key = `${hud.brain.v}:${animating(lines, pulse, t) ? Math.floor(t / 50) : 's'}`;
+    const key = `${hud.brain.v}:${animating(lines, pulse, t) ? Math.floor(t / (1000 / ANIM_HZ)) : 's'}`; // <= ANIM_HZ uploads (perf.js)
     const m = this.m && this.m.key === key ? this.m : this._mesh(drawBrainPanel(lines, pulse, t), key);
-    const gh = dev?.meshes?.gh;
+    // far left rail (layout.js): right edge just left of the graph's EVENT spine, top at the rail line
+    const L = hud.lx;
+    const sc = XR.panel;
+    m.mesh.scale.setScalar(sc);
     let target;
-    if (gh && gh.placed) {
-      target = gh.mesh.position.clone().add(new THREE.Vector3(0, -(gh.h / 2 + 0.025 + m.h / 2), 0));
-    } else if (card && card.target) {
-      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQ);
-      const yaw = Math.atan2(fwd.x, -fwd.z);
-      const r = new THREE.Vector3(Math.cos(yaw), 0, Math.sin(yaw));
-      const cw = card.mesh.geometry.parameters.width, ch = card.mesh.geometry.parameters.height;
-      target = card.mesh.position.clone().addScaledVector(r, -(cw / 2 + 0.55 + m.w / 2));
-      target.y += ch / 2 - m.h / 2;
+    if (L) {
+      const G = xrGraph(L, XR.dist);
+      const xr = G.x - XR.brainClear * G.eff - XR.colGap;
+      target = xrAt(L, xr - (m.w * sc) / 2, XR.leftTop - (m.h * sc) / 2);
     } else {
       target = new THREE.Vector3(-0.42, -0.1, -1.4).applyQuaternion(headQ).add(head);
     }
@@ -301,7 +300,7 @@ export class XrBrain {
     const k = pulse ? (t - pulse.t) / PULSE_MS : 2;
     if (card && k >= 0 && k <= 1) {
       const right = new THREE.Vector3(1, 0, 0).applyQuaternion(m.mesh.quaternion);
-      const a = m.mesh.position.clone().addScaledVector(right, m.w / 2).add(new THREE.Vector3(0, m.h / 2 - 0.03, 0));
+      const a = m.mesh.position.clone().addScaledVector(right, (m.w * sc) / 2).add(new THREE.Vector3(0, (m.h * sc) / 2 - 0.03, 0));
       const cr = new THREE.Vector3(1, 0, 0).applyQuaternion(card.mesh.quaternion);
       const z = card.mesh.position.clone().addScaledVector(cr, -card.mesh.geometry.parameters.width / 2)
         .add(new THREE.Vector3(0, card.mesh.geometry.parameters.height / 2 - 0.03, 0));

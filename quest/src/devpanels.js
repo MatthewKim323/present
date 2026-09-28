@@ -11,7 +11,8 @@
 //   main.js     setDevSender(fn) so button presses go out as dev_action
 import * as THREE from 'three';
 import { drawPersonCard } from './panels.js';
-import { LITE } from './perf.js';
+import { LITE, due } from './perf.js';
+import { show, XR, xrAt, xrCardRight } from './layout.js';
 
 const FONT = 'ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif';
 const MONO = 'ui-monospace, Menlo, monospace';
@@ -679,7 +680,7 @@ export class DesktopDev {
     const gh = hud.devGithub, ss = hud.qmSwarm || hud.devSession;
     const t = performance.now();
     this._cockpit(ctx, placed, vr, gh, ss, t);
-    this._preview(ctx, t);
+    if (show('preview')) this._preview(ctx, t); else this.pv = null;
   }
 
   // Preview shot: centered overlay, same panel + behavior as XR.
@@ -710,33 +711,36 @@ export class DesktopDev {
     if (!gh && !ss && !hud.devWorkerLinks?.length) return;
     if (gh && this.cache.gh !== gh) { this.cache.gh = gh; this.cache.ghCanvas = drawGithubPanel(gh); }
     if (ss && (this.cache.s !== ss || t - this.cache.sT > 120)) { this.cache.s = ss; this.cache.sT = t; this.cache.sCanvas = ss === hud.qmSwarm ? drawSwarmPanel(ss, t) : drawSessionPanel(ss, t); }
-    const card = [...placed.values()][0];
-    const b = card && [...placed.keys()].map((id) => hud.bboxFor(id)).find(Boolean);
-    const put = (c, x, y) => { const w = c.width / S, h = c.height / S; x = Math.max(8, Math.min(innerWidth - w - 8, x)); y = Math.max(8, Math.min(innerHeight - h - 8, y)); ctx.drawImage(c, x, y, w, h); return { x, y, w, h }; };
-    const leftX = (w) => (b ? vr.x + b[0] * vr.w - w - 16 : card ? card.x - w - 16 : 24);
-    let ghRect = null;
-    if (gh) {
-      const c = this.cache.ghCanvas;
-      // left of the person (their bbox), else left of the card, else top-left
-      ghRect = put(c, leftX(c.width / S), card ? card.y : 80);
-      for (const h of c.hits) this.hits.push({ ...h, x: ghRect.x + h.x, y: ghRect.y + h.y });
+    // placement: layout.js zones (GitHub lower center under the face, QM SWARM on the far right rail)
+    const z = hud.ld;
+    const k = z ? z.k : 1;
+    const put = (c, x, y) => { const w = (c.width / S) * k, h = (c.height / S) * k; x = Math.max(8, Math.min(innerWidth - w - 8, x)); y = Math.max(8, Math.min(innerHeight - h - 8, y)); ctx.drawImage(c, x, y, w, h); return { x, y, w, h }; };
+    if (gh && show('github')) {
+      const c = this.cache.ghCanvas, w = (c.width / S) * k, h = (c.height / S) * k;
+      // lower center, under the face; slides left if the card column comes down that far
+      let x = z ? z.gh.cx - w / 2 : 24, y = z ? z.gh.bottom - h : 80;
+      const col = z && [...placed.values()][0];
+      if (col && x + w > col.x - 12 && y < this._colBottom(col)) x = col.x - 12 - w;
+      const ghRect = put(c, x, y);
+      for (const h2 of c.hits) this.hits.push({ ...h2, x: ghRect.x + h2.x * k, y: ghRect.y + h2.y * k, w: h2.w * k, h: h2.h * k });
     }
-    if (ss) {
-      const c = this.cache.sCanvas, w = c.width / S;
-      let x = card ? card.x + card.w + 12 : innerWidth - w - 24, y = card ? card.y : 80;
-      if (x + w > innerWidth - 8) { // no room right of the card: stack on the left side instead
-        x = ghRect ? ghRect.x : leftX(w);
-        y = ghRect ? ghRect.y + ghRect.h + 10 : y;
-      }
-      const rect = put(c, x, y);
+    if (ss && show('qmswarm')) {
+      const c = this.cache.sCanvas;
+      const rect = put(c, z ? z.right.x : innerWidth - (c.width / S) - 24, z ? z.right.y : 80);
       if (ss === hud.qmSwarm) this.ssRect = rect;
-      for (const h of c.hits || []) this.hits.push({ ...h, x: rect.x + h.x, y: rect.y + h.y });
+      for (const h2 of c.hits || []) this.hits.push({ ...h2, x: rect.x + h2.x * k, y: rect.y + h2.y * k, w: h2.w * k, h: h2.h * k });
     }
     if (hud.devWorkerLinks?.length) {
       const c = drawWorkerLinks(hud.devWorkerLinks);
-      const rect = put(c, 24, innerHeight - c.height / S - 24);
-      for (const h of c.hits) this.hits.push({ ...h, x: rect.x + h.x, y: rect.y + h.y });
+      const rect = put(c, 24, innerHeight - (c.height / S) * k - 24);
+      for (const h2 of c.hits) this.hits.push({ ...h2, x: rect.x + h2.x * k, y: rect.y + h2.y * k, w: h2.w * k, h: h2.h * k });
     }
+  }
+
+  // bottom of the person column (card + activity + radar), from last frame's radar rect when there is one
+  _colBottom(col) {
+    const r = this.hud._radarRect; // visionfx.js DesktopVision, last frame
+    return Math.max(col.y + col.h, r ? r.y + r.h : 0) + 12;
   }
 
   click(x, y) {
@@ -758,7 +762,6 @@ export class DesktopDev {
 // ---------------------------------------------------------------- XR
 
 const M_PER_PX = 0.00105; // slightly smaller than the person card
-const FOLLOW_DEG = 40;
 const PV_M_PER_PX = 0.00077; // preview panel ~0.46 m wide
 const PV_DIST = 0.9;
 const PV_DROP = 0.08;        // below eye level    // body-locked: re-center only when the head turns this far away
@@ -825,53 +828,37 @@ export class XrDev {
     }
     const hud = this.hud;
     const t = performance.now();
-    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQ);
-    const yaw = Math.atan2(fwd.x, -fwd.z);
-    const right = (a) => new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
-    const ahead = (a) => new THREE.Vector3(Math.sin(a), 0, -Math.cos(a));
+    const L = hud.lx; // layout.js person frame (xr.js computes it every frame)
+    this.cardMeshes = cardMeshes;
     const card = [...cardMeshes.entries()].find(([k]) => k.startsWith('card:'))?.[1];
-    let center, cardHalf = 0, cy;
-    if (card && card.target) {
-      center = card.mesh.position.clone();
-      cardHalf = card.mesh.geometry.parameters.width / 2;
-      cy = center.y + card.mesh.geometry.parameters.height / 2; // top edge
-      this.anchorYaw = Math.atan2(center.x - head.x, -(center.z - head.z));
-    } else {
-      // body-locked: hold position, re-center when the head has turned away
-      const off = this.anchorYaw == null ? Infinity : Math.abs(Math.atan2(Math.sin(yaw - this.anchorYaw), Math.cos(yaw - this.anchorYaw)));
-      if (off > THREE.MathUtils.degToRad(FOLLOW_DEG) || !this.anchorPos) {
-        this.anchorYaw = yaw;
-        this.anchorPos = head.clone().addScaledVector(ahead(yaw), dist).add(new THREE.Vector3(0, -0.02, 0));
-      }
-      center = this.anchorPos;
-      cy = center.y + 0.14;
-    }
-    const r = right(this.anchorYaw);
-    const place = (name, x, drop = 0) => {
+    const sc = XR.panel;
+    const place = (name, x, yTop) => {
       const m = this.meshes[name];
-      const target = center.clone().addScaledVector(r, x);
-      target.y = cy - m.h / 2 - drop;
+      m.mesh.scale.setScalar(sc);
+      const target = xrAt(L, x, yTop - (m.h * sc) / 2, this._tgt ||= new THREE.Vector3());
       if (!m.placed) { m.mesh.position.copy(target); m.placed = true; } else m.mesh.position.lerp(target, 0.12);
       m.mesh.lookAt(head);
     };
-    if (hud.devGithub) {
+    if (hud.devGithub && show('github') && L) {
       const m = this._mesh('gh', hud.devGithub, () => drawGithubPanel(hud.devGithub));
-      // left of the person: card sits right of their head, so skip past the card and a body width
-      place('gh', card ? -(cardHalf + 0.55 + m.w / 2) : -(0.04 + m.w / 2));
+      // lower center: under the face, below the chip + barcode + filmstrip
+      place('gh', 0, -(L.halfH + XR.ghBelow));
     } else this._drop('gh');
-    if (hud.qmSwarm || hud.devSession) {
+    if ((hud.qmSwarm || hud.devSession) && show('qmswarm') && L) {
       const s = hud.qmSwarm || hud.devSession;
-      const sec = Math.floor(t / 250);
-      const active = s === hud.qmSwarm && (s.workers || []).some(w => w.state === 'running');
-      const key = active ? `${s._rx}:${Math.floor(t / (LITE ? 500 : 250))}` : `${s._rx}:${sec}`;
-      const m = this._mesh('ss', key, () => s === hud.qmSwarm ? drawSwarmPanel(s, t) : drawSessionPanel(s, t));
-      place('ss', card ? cardHalf + 0.06 + m.w / 2 : 0.04 + m.w / 2);
+      // only running lanes animate (pulse dot, elapsed clock); a settled swarm redraws only on new data
+      const live = s !== hud.qmSwarm || (s.workers || []).some((w) => (w.state || 'running') === 'running');
+      const m = this._mesh('ss', live ? `${s._rx}:${Math.floor(t / (LITE ? 500 : 250))}` : `${s._rx}`, () => s === hud.qmSwarm ? drawSwarmPanel(s, t) : drawSessionPanel(s, t));
+      // far right rail: past the person card column
+      place('ss', xrCardRight(L, card?.mesh) + XR.colGap + (m.w * sc) / 2, XR.rightTop);
     } else this._drop('ss');
-    if (hud.devWorkerLinks?.length) {
+    if (hud.devWorkerLinks?.length && L) {
       const m = this._mesh('links', hud.devWorkerLinks, () => drawWorkerLinks(hud.devWorkerLinks));
-      place('links', 0, 0.48);
+      // under the GitHub panel (lower center), else where the GitHub panel would be
+      const gh = this.meshes.gh;
+      place('links', 0, -(L.halfH + XR.ghBelow) - (gh ? gh.h * sc + XR.gap : 0));
     } else this._drop('links');
-    this._preview(head, headQ, t);
+    if (show('preview')) this._preview(head, headQ, t); else this._dropPreview();
   }
 
   _dropPreview() {

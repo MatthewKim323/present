@@ -3,7 +3,7 @@
 //
 //   person head --beam--> EVENT --> QM --> Context / Product / Builder --> PR
 //                                           |                 |    (tool calls orbit Builder)
-//                                         GBRAIN <-------- MEMORABLE --> procedure card
+//                                         GBRAIN <-------- MEMORABLE   (procedure card: memorypanel.js)
 //
 // Read-only consumer of qm_swarm, agent_activity, dev_session, dev_github,
 // memory_event, context_delta, person_card (contracts/EVENTS.md). One simulation
@@ -11,7 +11,8 @@
 // renderers: XrSwarm (three.js, one instanced sprite batch + ribbon edges + label
 // planes) and DesktopSwarm (2D canvas projection). Hooks elsewhere are one-liners.
 import * as THREE from 'three';
-import { LITE } from './perf.js'; // ?lite=1: no edge particles, no comet / satellite trails
+import { LITE } from './perf.js';
+import { deskGraph, XR, xrAt, xrGraph } from './layout.js'; // ?lite=1: no edge particles, no comet / satellite trails
 
 const FONT = 'ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif';
 const MONO = 'ui-monospace, Menlo, monospace';
@@ -38,10 +39,9 @@ const LAYOUT = {
   builder: [0.29, -0.235, 0.05],
   gbrain: [-0.36, -0.44, 0.02],
   memorable: [0.03, -0.47, 0.04],
-  pr: [0.44, -0.4, 0.03],
+  pr: [0.47, -0.33, 0.03], // above the MEMORABLE label row (layout.js pass: they collided at desktop scale)
 };
 const EXTRA = [[-0.125, -0.335, 0.06], [0.125, -0.335, 0.06], [-0.4, -0.27, 0.03]];
-const CARD_AT = [0.03, -0.52, 0.05]; // top-center of the procedure card
 const SRC_DEFAULT = [0.6, 0.06, -0.25];
 
 const T = () => performance.now() / 1000;
@@ -125,27 +125,6 @@ function drawPrLabel(pr) {
   glass(g, w, h, 12, hexA(ck[1] || ACCENT, 0.5));
   let x = 11;
   for (const [s, col, f] of parts) { g.font = f; g.fillStyle = col || '#fff'; g.textAlign = 'left'; g.fillText(s, x, 16); x += g.measureText(s).width; }
-  return c;
-}
-function drawProcCard(p) {
-  const steps = Array.isArray(p.steps) ? p.steps : null;
-  const n = p.steps_total || (steps ? steps.length : Number(p.steps) || 0);
-  const rows = steps ? steps.slice(0, 5) : [];
-  const w = 232, h = 50 + rows.length * 14 + (steps && steps.length > 5 ? 12 : 0) + (p.metrics ? 16 : 0) + 8;
-  const [c, g] = mk(w, h);
-  glass(g, w, h, 10, hexA(ACCENT, 0.45));
-  g.fillStyle = ACCENT; g.beginPath(); g.arc(13, 14, 3, 0, Math.PI * 2); g.fill();
-  txt(g, p.mode === 'recalled' ? 'RECALLED PROCEDURE' : 'PROCEDURE LEARNED', 22, 17.5, { size: 8.5, weight: 700, color: ACCENT, track: 1.3 });
-  txt(g, n ? `${n} steps` : '', w - 10, 17.5, { size: 9, color: 'rgba(232,236,240,0.5)', align: 'right' });
-  txt(g, p.title || 'procedure', 10, 36, { size: 11, weight: 500, font: MONO, max: w - 20 });
-  let y = 52;
-  rows.forEach((s, i) => {
-    txt(g, String(i + 1).padStart(2, ' '), 10, y, { size: 9, font: MONO, color: 'rgba(124,240,197,0.6)' });
-    txt(g, typeof s === 'string' ? s : s.action ? `${s.action} ${shortTarget(s.target)}`.trim() : s.name || s.title || '', 28, y, { size: 9.5, color: 'rgba(232,236,240,0.72)', max: w - 38 });
-    y += 14;
-  });
-  if (steps && n > 5) { txt(g, `+${n - 5} more`, 28, y, { size: 9, color: 'rgba(232,236,240,0.4)' }); y += 12; }
-  if (p.metrics) txt(g, p.metrics, 10, y + 4, { size: 9.5, font: MONO, color: ACCENT, max: w - 20 });
   return c;
 }
 function hexA(hex, a) {
@@ -523,7 +502,7 @@ export class SwarmSim {
   // ---------------------------------------------------------------- per frame
   _pos(s, id, out) {
     if (id === 'src') { const p = s.src || SRC_DEFAULT; out[0] = p[0]; out[1] = p[1] + 0.02; out[2] = p[2]; return out; }
-    if (id === 'card') { out[0] = CARD_AT[0]; out[1] = CARD_AT[1] - 0.02; out[2] = CARD_AT[2]; return out; }
+    if (id === 'card') id = 'memorable'; // recalled procedure leaves from the MEMORABLE node (card lives in memorypanel.js)
     const n = s.nodes.get(id);
     const p = n ? n.pos : LAYOUT.qm;
     out[0] = p[0]; out[1] = p[1]; out[2] = p[2];
@@ -714,12 +693,8 @@ export class SwarmSim {
       this.labels.push({ id: gh.uid, canvas: gh.canvas, x: g.pos[0] + 0.02, y: g.pos[1] - 0.105 - 0.008 * easeOut(u / 0.2) - slot * 0.03, z: g.pos[2] + 0.01, ax: 0.6, ay: 0, alpha: a * (slot ? 0.55 : 0.9) });
     });
 
-    // procedure card materializes under Memorable
-    if (s.card && s.proc && t >= s.card.bornAt) {
-      if (s.card.ver !== s.procVer) { s.card.canvas = drawProcCard(s.proc); s.card.ver = s.procVer; }
-      const u = (t - s.card.bornAt) / 0.45;
-      this.labels.push({ id: `card${s.procKey}`, canvas: s.card.canvas, ver: s.card.ver, x: CARD_AT[0], y: CARD_AT[1] - 0.012, z: CARD_AT[2], ax: 0.5, ay: 0, alpha: easeOut(u), sy: easeOutBack(u), card: true });
-    }
+    // no procedure card here: memorypanel.js owns the one learned / recalled card (layout.js de-dupe).
+    // Memorable keeps its node glow, beams and a one-line label (see _label).
   }
 
   _label(s, n, t) {
@@ -751,9 +726,9 @@ export class SwarmSim {
       case 'memorable': {
         const lit = !!n.lit, ms = n.mstate || '';
         const sub = ms === 'recording' ? `recording trace${n.calls ? ` · ${n.calls} calls` : ''}` : ms === 'extracting' ? 'extracting procedure'
-          : ms === 'refused' ? `refused${n.reason ? ': ' + n.reason : ''}` : lit ? 'procedural memory' : null;
+          : ms === 'refused' ? `refused${n.reason ? ': ' + n.reason : ''}` : lit && s.proc ? `${s.proc.mode} · ${s.proc.title}` : lit ? 'procedural memory' : null;
         const tag = ms === 'recording' ? 'REC' : ms === 'extracting' ? '···' : ms === 'refused' ? '✗' : lit ? '●' : '';
-        key = `m${lit}|${ms}|${n.calls}|${n.reason}`;
+        key = `m${lit}|${ms}|${n.calls}|${n.reason}|${s.procKey}`;
         draw = () => drawNodeLabel({ title: 'MEMORABLE', sub, tag, tagK: ms === 'refused' ? K.bad : ms === 'recording' ? K.warn : K.accent });
         ax = 0; ay = 0.5; dx = 0.03; dy = 0.004; break;
       }
@@ -870,12 +845,20 @@ export class XrSwarm {
       const card = xr.meshes.get('card:' + (s.anchor ?? 'free')) || xr.meshes.get('label:' + (s.anchor ?? 'free')) || [...xr.meshes.entries()].find(([k]) => k.startsWith('card:') || k.startsWith('label:'))?.[1];
       P = card?.target ? card.target.clone().add(new THREE.Vector3(0, 0.12, 0)) : xr._local(head, headQ, 0, 0.1, -dist);
     }
-    const toP = P.clone().sub(head); toP.y = 0; toP.normalize();
-    const right = new THREE.Vector3(-toP.z, 0, toP.x);
-    const A = P.clone().addScaledVector(right, this.side * this.off);
-    A.y = head.y + 0.03;
+    // layout.js: EVENT node left of the face (the graph hangs below it), pulled toward the wearer along the ray
+    // so it reads in front of the rails; scaled so its footprint matches layout.js at the person's distance
+    let A;
+    const L = hud.lx;
+    if (L) {
+      const G = xrGraph(L, dist);
+      A = xrAt(L, G.x, G.y);
+    } else {
+      const toP = P.clone().sub(head); toP.y = 0; toP.normalize();
+      A = P.clone().addScaledVector(new THREE.Vector3(-toP.z, 0, toP.x), this.side * this.off);
+      A.y = head.y + 0.03;
+    }
     const back = head.clone().sub(A); back.y = 0;
-    A.addScaledVector(back.normalize(), this.pull); // closer than the person: legible + in front of the cockpit panels
+    A.addScaledVector(back.normalize(), L ? XR.graphPull : this.pull);
     this.group.position.copy(A);
     this.group.lookAt(head.x, A.y, head.z); // +z of the graph faces the wearer, upright
     this.group.updateMatrixWorld(true);
@@ -900,7 +883,7 @@ export class XrSwarm {
     const t = T();
     sim.step(t);
     const op = sim.opacity;
-    this.group.scale.setScalar(sim.scale || 1);
+    this.group.scale.setScalar((sim.scale || 1) * XR.graphScale); // layout.js: demo keeps the graph restrained
 
     this.ib.needsUpdate = true;
     this.ib.clearUpdateRanges?.();
@@ -1031,19 +1014,15 @@ export class DesktopSwarm {
   _frame(s, vr) {
     const hud = this.hud;
     const b = s.anchor != null ? hud.bboxFor(s.anchor) : [...hud.tracks.keys()].map((id) => hud.bboxFor(id)).find(Boolean);
-    let hx, hy, left, oy;
-    if (b) {
-      hx = vr.x + (b[0] + b[2] / 2) * vr.w; hy = vr.y + b[1] * vr.h;
-      left = vr.x + (b[0] + b[2]) * vr.w + 8;
-      oy = hy + 235;
-    } else {
-      hx = innerWidth * 0.5; hy = innerHeight * 0.25;
-      left = innerWidth * 0.45; oy = innerHeight * 0.4;
-    }
-    left = Math.min(left, innerWidth - 420);
-    oy = Math.max(60, Math.min(innerHeight * 0.55, oy));
-    const scale = Math.max(300, Math.min(560, (innerWidth - left - 16) / 1.15, (innerHeight - oy - 30) / 0.66));
-    return { ox: left + 0.5 * scale, oy, scale, hx, hy };
+    let hx, hy;
+    if (b) { hx = vr.x + (b[0] + b[2] / 2) * vr.w; hy = vr.y + b[1] * vr.h; }
+    else { hx = innerWidth * 0.5; hy = innerHeight * 0.25; }
+    // zone: left of the face (layout.js deskGraph)
+    const G = hud.ld ? deskGraph(hud.ld) : { ox: innerWidth * 0.3, oy: innerHeight * 0.4, scale: 420, label: 1 };
+    // glide when the zone changes (GitHub panel appears, window resizes) instead of jumping
+    const P = (this._G ||= { ...G });
+    for (const k of ['ox', 'oy', 'scale', 'label']) P[k] += (G[k] - P[k]) * 0.12;
+    return { ox: P.ox, oy: P.oy, scale: P.scale, label: P.label, hx, hy };
   }
 
   _proj(x, y, z, F, t, out) {
@@ -1108,7 +1087,8 @@ export class DesktopSwarm {
     // labels (1 css px per canvas px, anchored at the projected point)
     for (const L of sim.labels) {
       this._proj(L.x, L.y, L.z, F, t, p);
-      const w = L.canvas.width / S, h = (L.canvas.height / S) * (L.sy ?? 1);
+      const lk = F.label || 1;
+      const w = (L.canvas.width / S) * lk, h = (L.canvas.height / S) * (L.sy ?? 1) * lk;
       ctx.globalAlpha = clamp01(L.alpha) * op;
       const dy = L.ay === 0 ? 4 : L.ay === 1 ? -4 : 0, dx = L.ax === 0 ? 6 : 0;
       ctx.drawImage(L.canvas, p[0] - L.ax * w + dx, p[1] - L.ay * h + dy, w, h);

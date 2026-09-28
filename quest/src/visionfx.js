@@ -10,6 +10,7 @@
 //   mock.js     VISION_SCRIPT + VISION_LEAD (scripted: unknown -> intro -> learning -> recognized -> radar grows)
 import * as THREE from 'three';
 import { LITE, ANIM_HZ, due } from './perf.js';
+import { show, XR } from './layout.js';
 
 const FONT = 'ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif';
 const MONO = 'ui-monospace, Menlo, monospace';
@@ -101,7 +102,23 @@ function liveFaces(hud, t = now()) {
     if (t - f.t > STALE_MS) { hud.vfx.faces.delete(k); continue; }
     out.push([k, f]);
   }
+  // Unrecognized faces other than the conversation partner (the single largest face in view) get only faint
+  // corner brackets: no chip, readouts, candidates or barcode. Recognized / learning faces always get the full treatment.
+  let big = null, bigA = -1;
+  for (const [, f] of out) { const a = f.e.bbox[2] * f.e.bbox[3]; if (a > bigA) { bigA = a; big = f; } }
+  for (const [k, f] of out) {
+    const st = f.e.state, la = hud.vfx.learnedAt?.get(k) || 0;
+    f.minor = !(st === 'recognized' || st === 'learning' || (la && t - la < FILM_HOLD_MS * 2) || f === big);
+  }
   return out;
+}
+
+// Person cards for UNKNOWN faces float around the HUD with nothing to say. Show one only when its face is the
+// conversation partner (the largest face) or is being learned; recognized people always get their card.
+export function hideCard(hud, id, msg) {
+  if (!msg || !/^\s*unknown/i.test(String(msg.name || ''))) return false;
+  const f = hud.vfx?.faces?.get(String(id));
+  return !f || !!f.minor || now() - f.t > STALE_MS;
 }
 
 function shownDims(r, t = now()) {
@@ -174,6 +191,20 @@ export function drawFace(ctx, r, f, film, t = now(), learnedAt = 0) {
   const k = (e.state === 'recognized' ? 1 + 0.35 * (1 - lock) : 1) * breathe;
   const w = r.w * k, h = r.h * k, x0 = cx - w / 2, y0 = cy - h / 2;
   const L = Math.max(8, Math.min(w, h) * 0.2);
+  if (f.minor) {
+    // background face: acknowledged, nothing more (see liveFaces)
+    const m = Math.max(6, Math.min(r.w, r.h) * 0.14);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(232,236,240,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const [px, py, dx, dy] of [[r.x, r.y, 1, 1], [r.x + r.w, r.y, -1, 1], [r.x, r.y + r.h, 1, -1], [r.x + r.w, r.y + r.h, -1, -1]]) {
+      ctx.moveTo(px + dx * m, py); ctx.lineTo(px, py); ctx.lineTo(px, py + dy * m);
+    }
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   ctx.save();
   ctx.strokeStyle = col;
   ctx.lineWidth = e.state === 'recognized' ? 2 : 1.5;
@@ -420,20 +451,21 @@ export class DesktopVision {
       const r = { x: vr.x + bx * vr.w, y: vr.y + by * vr.h, w: bw * vr.w, h: bh * vr.h };
       drawFace(ctx, r, f, hud.vfx.film.get(k), t, hud.vfx.learnedAt.get(k) || 0);
     }
-    // radar above the person card, else under the card column (card, deltas, activity), never over the face
+    // radar: stacked under the person column (card + deltas + activity), right of the face (layout.js)
+    hud._radarRect = null;
+    if (!show('radar')) return;
     for (const [id, rect] of placed) {
       const r = radarFor(hud, hud.cards.get(id));
       if (!r) continue;
       let c = this.radarCache.get(r.person_id);
-      if (!c || c.r !== r || radarAnimating(r, t)) { c = { r, canvas: drawRadar(r, t) }; this.radarCache.set(r.person_id, c); }
-      const w = RADAR_W, h = RADAR_H;
-      let x = rect.x, y = rect.y - h - 10;
-      if (y < 8) {
-        const col = hits.filter((hh) => hh.track === id && hh.x >= rect.x - 1 && hh.y >= rect.y - 1);
-        y = Math.max(...col.map((hh) => hh.y + hh.h), rect.y + rect.h) + 10;
-        if (y + h > innerHeight - 8) { x = rect.x + rect.w + 12; y = rect.y; } // no room below: beside the card
-      }
+      if (!c || c.r !== r || (radarAnimating(r, t) && due(c, ANIM_HZ, t))) { c = { r, canvas: drawRadar(r, t), _drawT: t }; this.radarCache.set(r.person_id, c); }
+      const k = rect.k || 1;
+      const w = RADAR_W * k, h = RADAR_H * k;
+      const col = hits.filter((hh) => hh.track === id && hh.x >= rect.x - 1 && hh.y >= rect.y - 1);
+      let x = rect.x, y = Math.max(...col.map((hh) => hh.y + hh.h), rect.y + rect.h) + 10;
+      if (y + h > innerHeight - 8) y = innerHeight - 8 - h; // short screens: pin to the bottom, still in the column
       if (x + w > innerWidth - 8) x = innerWidth - w - 8;
+      hud._radarRect = { x, y, w, h };
       ctx.drawImage(c.canvas, x, y, w, h);
       break;
     }
@@ -523,8 +555,8 @@ export class XrVision {
       if (!m.mesh.userData.placed) { m.mesh.position.copy(p); m.mesh.userData.placed = true; } else m.mesh.position.lerp(p, 0.35);
       m.mesh.quaternion.copy(headQ);
     }
-    // radar above the first person card
-    for (const [id, msg] of hud.cards) {
+    // radar stacked under the first person card (layout.js: right of the face, card first)
+    for (const [id, msg] of (show('radar') ? hud.cards : [])) {
       const r = radarFor(hud, msg);
       const card = xr.meshes.get('card:' + id) || xr.meshes.get('label:' + id) || xr.meshes.get('detail:person');
       if (!r || !card) continue;
@@ -541,7 +573,10 @@ export class XrVision {
         m.r = r;
       }
       const ch = card.mesh.geometry.parameters.height;
-      const target = _v.copy(card.mesh.position).add(_right.set(0, ch / 2 + hm / 2 + 0.02, 0));
+      const target = _v.copy(card.mesh.position).add(_right.set(0, -(ch / 2 + hm / 2 + XR.radarGap), 0));
+      // left edges aligned with the card
+      const cw = card.mesh.geometry.parameters.width;
+      if (hud.lx) target.addScaledVector(hud.lx.r, -(cw - wm) / 2);
       if (!m.mesh.userData.placed) { m.mesh.position.copy(target); m.mesh.userData.placed = true; } else m.mesh.position.lerp(target, 0.15);
       m.mesh.lookAt(head);
       break;
@@ -571,7 +606,7 @@ function mockFace(ms) {
   const base = { track_id: 3, bbox, landmarks: lm.map(([a, b]) => [+a.toFixed(4), +b.toFixed(4)]), det_score: +(0.9 + 0.04 * Math.sin(ms / 300)).toFixed(2), person_id: null };
   const j = 0.04 * Math.sin(ms / 170);
   if (ms < 900) return { ...base, state: 'detecting', name: null, match_score: 0, top_candidates: [], embedding_sig: null };
-  const strangers = [{ name: 'Stephen', score: +(0.14 + j).toFixed(2) }, { name: 'Priya', score: +(0.09 + j / 2).toFixed(2) }];
+  const strangers = [{ name: 'Stephen', score: +(0.14 + j).toFixed(2) }, { name: 'Sam', score: +(0.09 + j / 2).toFixed(2) }];
   if (ms < 2400) return { ...base, state: 'matching', name: null, match_score: strangers[0].score, top_candidates: strangers, embedding_sig: mockSig(3, j) };
   if (ms < LEARN_AT) return { ...base, state: 'unknown', name: 'UNKNOWN PERSON 03', match_score: strangers[0].score, top_candidates: strangers, embedding_sig: mockSig(3, j) };
   if (ms < LEARNED_AT) {

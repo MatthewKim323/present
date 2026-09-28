@@ -1,10 +1,12 @@
 import { drawActionPerson as drawPersonCard } from './person-actions.js';
 import { deltasAnimating, DesktopDev } from "./devpanels.js";
-import { DesktopVision } from "./visionfx.js";
+import { DesktopVision, hideCard } from "./visionfx.js";
 import { DesktopSwarm } from "./swarmviz.js";
 import { DesktopBrain } from "./brainpanel.js";
+import { DesktopCaptions } from './captions.js';
 import { DesktopMemory } from "./memorypanel.js";
 import { ANIM_HZ, due, safe, frameBegin, frameEnd } from "./perf.js";
+import { deskZones, DESK, show } from './layout.js';
 // Desktop is a spatial preview: labels stay beside people; detail is intentional.
 import {
   drawPersonLabel,
@@ -26,8 +28,9 @@ export class DesktopHud {
     this.dev = new DesktopDev(hud);
     this.vfx = new DesktopVision(hud);
     this.swarm = new DesktopSwarm(hud);
-    this.brain = new DesktopBrain(hud);
-    this.mem = new DesktopMemory(hud, this.dev);
+    this.brain = new DesktopBrain(hud); // GBRAIN live feed
+    this.captions = new DesktopCaptions(hud); // live transcript strip
+    this.mem = new DesktopMemory(hud, this.dev); // Memorable stack under the QM SWARM panel
     this.pointer = { x: -1, y: -1 };
     document.fonts?.ready.then(() => this.cache.clear());
     window.addEventListener("resize", () => this._resize());
@@ -210,8 +213,13 @@ export class DesktopHud {
       }
     }
 
+    // layout.js zones: the sponsor layers (GitHub, QM SWARM, GBRAIN, Memorable, graph) place
+    // themselves relative to the person's face (one plan for every layer; hud.ld)
+    const z = (hud.ld = deskZones(innerWidth, innerHeight, this._face(vr), !!hud.devGithub && show('github')));
+
     let freeY = area.top;
     for (const [id, msg] of hud.cards) {
+      if (hideCard(hud, id, msg)) continue; // unknown background faces: no floating card (visionfx.js)
       // The expanded panel already identifies its person; don't spend scarce
       // mobile space repeating that label above it.
       if (compact && hasDetail && id === selected) continue;
@@ -296,12 +304,13 @@ export class DesktopHud {
     if (compactPreview) {
       if (hud.view === "agents") safe("desktop dev", () => this.dev.draw(ctx, placed, vr));
     } else {
-      safe("desktop swarm", () => this.swarm.draw(ctx, vr));
+      if (show('swarm3d')) safe("desktop swarm", () => this.swarm.draw(ctx, vr));
       safe("desktop dev", () => this.dev.draw(ctx, placed, vr));
-      safe("desktop brain", () => this.brain.draw(ctx, placed, vr));
-      safe("desktop memory", () => this.mem.draw(ctx));
+      if (show('brain')) safe("desktop brain", () => this.brain.draw(ctx, placed, vr));
+      if (show('memorable')) safe("desktop memory", () => this.mem.draw(ctx));
       safe("desktop vision", () => this.vfx.draw(ctx, placed, vr, this.hits));
     }
+    safe('desktop captions', () => this.captions.draw(ctx, innerWidth, innerHeight));
 
     // One quiet acknowledgement at a time; older events remain in Memories.
     const toast = hud.liveToasts().at(-1);
@@ -320,17 +329,23 @@ export class DesktopHud {
         0,
         1,
       );
-      // Keep notifications opposite the context panel on wider displays.
-      const toastArea = compact
-        ? area
-        : { ...area, top: area.bottom - 78, bottom: area.bottom };
-      this._place(
-        c,
-        compact ? (innerWidth - 300) / 2 : area.left,
-        area.bottom - c.height / 2,
-        toastArea,
-      );
+      // top center, one line at a time, clear of the control panel (layout.js)
+      const w = c.width / 2, h = c.height / 2;
+      const x = Math.max(z.toast.minX, Math.min(innerWidth - DESK.pad - w, z.toast.cx - w / 2));
+      ctx.drawImage(c, x, z.toast.y + 6 * (1 - Math.min(1, toast.age / 0.08)), w, h);
       ctx.globalAlpha = 1;
     }
+  }
+
+  // Face rect on screen: the recognized face (visionfx) if any, else the first card's track, else any track.
+  _face(vr) {
+    const hud = this.hud;
+    let b = null;
+    const faces = hud.vfx?.faces;
+    if (faces) for (const f of faces.values()) if (f.e && performance.now() - f.t < 1500) { b = f.e.bbox; break; }
+    if (!b) for (const id of hud.cards.keys()) if ((b = hud.bboxFor(id))) break;
+    if (!b) for (const id of hud.tracks.keys()) if ((b = hud.bboxFor(id))) break;
+    if (!b) return null;
+    return { x: vr.x + b[0] * vr.w, y: vr.y + b[1] * vr.h, w: b[2] * vr.w, h: b[3] * vr.h };
   }
 }

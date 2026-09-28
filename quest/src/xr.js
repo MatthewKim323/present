@@ -1,11 +1,14 @@
 // Spatial adaptations of React Bits Target Cursor, Dock and Animated Content.
 // These are native three.js planes: no DOM overlays inside immersive WebXR.
+// Cards are anchored by projecting the perception bbox (from the passthrough camera frame) into a
+// ray from the head and placing the label at a fixed distance; tune with ?hfov= and ?dist=.
 import * as THREE from "three";
 import { FluidGlassPass } from "./fluid-glass-pass.js";
 import { XrPointers } from "./xr-pointers.js";
-import { XrVision } from "./visionfx.js";
+import { XrVision, hideCard } from "./visionfx.js";
 import { XrSwarm } from './swarmviz.js';
 import { XrBrain } from './brainpanel.js';
+import { XrCaptions } from './captions.js';
 import { XrMemory } from './memorypanel.js';
 import { due, safe, frameBegin, frameEnd, perfLine, drawPerf, drawOffline, offlineText } from './perf.js';
 import { XrDev, deltasAnimating } from "./devpanels.js";
@@ -19,6 +22,8 @@ import {
   drawMemoryList,
   drawToolPanel,
 } from "./panels.js";
+import { XR, xrFrame, xrAt, show } from './layout.js';
+import { XrInput } from './xrinput.js';
 
 const M_PER_PX = 0.0012;
 const VIEWS = ["person", "memories", "agents"];
@@ -68,7 +73,13 @@ export class XrHud {
     this._direction = new THREE.Vector3();
     this._offset = new THREE.Vector3();
     this.raycaster = new THREE.Raycaster();
-    this._select = (ev) => this._onSelect(ev);
+    // Hand pinch (and controller trigger) arrive as `select`. xrinput.js gets first say (grab / resize /
+    // panel); a pinch on nothing, a label, the dock, a tool panel, a GitHub button or the preview runs _onSelect.
+    this._select = (ev) => {
+      let used = false;
+      if (this.input) safe('xr input select', () => { used = this.input.consumeSelect(ev); });
+      if (!used) this._onSelect(ev);
+    };
     this._end = () => {
       try {
         this._devEnd?.();
@@ -97,15 +108,36 @@ export class XrHud {
         0.05,
         50,
       );
-      const session = await navigator.xr.requestSession("immersive-ar", {
-        requiredFeatures: ["local"],
-        optionalFeatures: [
-          "hand-tracking",
-          "local-floor",
-          "dom-overlay",
-        ],
-        domOverlay: { root: document.getElementById('xr-dom') || document.body },
-      });
+      // Quest Browser: 'local' is always granted for immersive sessions; hand-tracking gives pinch as `select`
+      // without controllers; dom-overlay is optional. Its root is the empty #xr-dom (index.html), never the
+      // page body: the React shell and the #cam video must not be composited over passthrough.
+      const init = { requiredFeatures: ['local'], optionalFeatures: ['local-floor', 'hand-tracking', 'dom-overlay'] };
+      let domRoot = document.getElementById('xr-dom');
+      if (!domRoot) { domRoot = document.createElement('div'); domRoot.id = 'xr-dom'; document.body.appendChild(domRoot); }
+      init.domOverlay = { root: domRoot };
+      let session;
+      try {
+        session = await navigator.xr.requestSession('immersive-ar', init);
+      } catch (e) {
+        // Some Quest Browser builds reject the optional features (dom-overlay/hand-tracking): retry bare.
+        console.warn('immersive-ar with optional features failed, retrying bare:', e);
+        session = await navigator.xr.requestSession('immersive-ar', { optionalFeatures: ['local-floor', 'hand-tracking'] })
+          .catch(() => navigator.xr.requestSession('immersive-ar'))
+          .catch(async (e2) => {
+            // AR refused outright: fall back to immersive-vr with the headset camera feed as the backdrop,
+            // so the HUD still sits over the real world (flat, not stereo passthrough).
+            console.warn('immersive-ar refused, falling back to immersive-vr + camera backdrop:', e2);
+            const s = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'hand-tracking'] });
+            const cam = document.getElementById('cam');
+            if (cam && cam.srcObject) {
+              const tex = new THREE.VideoTexture(cam);
+              tex.colorSpace = THREE.SRGBColorSpace;
+              this.scene.background = tex;
+            }
+            this.vrFallback = true;
+            return s;
+          });
+      }
       this.session = session;
       session.addEventListener("end", this._end);
       await renderer.xr.setSession(session);
@@ -124,7 +156,9 @@ export class XrHud {
       this.vfx = new XrVision(this.scene, this.hud);
       this.swarm = new XrSwarm(this.scene, this);
       this.brain = new XrBrain(this.scene, this.hud);
+      this.captions = new XrCaptions(this.scene, this.hud); // live transcript strip
       this.mem = new XrMemory(this.scene, this.hud);
+      this._initInput();
       session.addEventListener("select", this._select);
       this._createCursor();
       renderer.setAnimationLoop((t, frame) => this._frame(t, frame));
@@ -170,6 +204,27 @@ export class XrHud {
     );
   }
 
+  // Hover outline, pinch-hold move, corner / two-hand resize (xrinput.js). Getters, not meshes: every module
+  // rebuilds its mesh when sizes change. `pass` panels keep their click in _onSelect (labels, dock, tool
+  // panels, GitHub buttons, preview). XrPointers owns the beams (see _frameInner).
+  _initInput() {
+    safe('xr input init', () => {
+      const I = (this.input = new XrInput(this));
+      const list = (prefix) => { const out = []; for (const [k, m] of this.meshes) if (k.startsWith(prefix)) out.push([k, m.mesh]); return out; };
+      I.register('label', () => list('label:'), { pass: true, grab: false });
+      I.register('detail', () => list('detail:'), { pass: true, grab: false });
+      I.register('tool', () => list('tool:'), { pass: true, grab: false });
+      I.register('dock', () => this.meshes.get('dock')?.mesh, { pass: true, grab: false });
+      I.register('gh', () => this.dev?.meshes.gh?.mesh, { pass: true });
+      I.register('ss', () => this.dev?.meshes.ss?.mesh);
+      I.register('links', () => this.dev?.meshes.links?.mesh, { pass: true });
+      I.register('memorable', () => this.mem?.m?.mesh);
+      I.register('brain', () => this.brain?.m?.mesh);
+      I.register('graph', () => (this.swarm?.group.visible ? this.swarm.group : null), { proxy: [-0.6, -0.62, 0.66, 0.16] });
+      I.register('preview', () => this.dev?.pv?.mesh, { pass: true, grab: false });
+    });
+  }
+
   _dispose() {
     for (const [type, listener] of this._devListeners || [])
       this.session?.removeEventListener(type, listener);
@@ -185,6 +240,8 @@ export class XrHud {
     this.hud.xrActive = false;
     this.pointers?.dispose();
     this.pointers = null;
+    this.input = null; // its lasers / outlines live in the scene, cleared below
+    this.captions = null;
     this.renderer?.setAnimationLoop(null);
     this.session?.removeEventListener("select", this._select);
     this.session?.removeEventListener("end", this._end);
@@ -209,6 +266,8 @@ export class XrHud {
           mat.dispose();
         }
       });
+      this.scene.background?.dispose?.(); // immersive-vr fallback camera backdrop
+      this.scene.background = null;
       this.scene.clear();
     }
     this.renderer?.renderLists?.dispose();
@@ -244,8 +303,11 @@ export class XrHud {
       seen = new Set();
     const selected = hud.selectedTrack;
     let freeIdx = 0;
+    // layout.js person frame (face center at ?dist=, right, up): every layer places itself relative to it
+    safe('xr layout', () => xrFrame(hud, this, head, headQ));
 
     for (const [id, msg] of hud.cards) {
+      if (hideCard(hud, id, msg)) continue; // unknown background faces: no floating label (visionfx.js)
       const key = "label:" + id;
       seen.add(key);
       const selectedLabel = selected === String(id);
@@ -348,37 +410,45 @@ export class XrHud {
 
     // One confirmation at a time; expanded detail owns the center of view.
     // Expire hidden toasts too, while retaining them in memory history.
+    // Placement (layout.js): above the person's head when someone is in front of you, else head-locked top center.
     const liveToasts = hud.liveToasts();
+    const L = hud.lx;
     for (const toast of detail || toolPanels.length
       ? []
       : liveToasts.slice(-1)) {
       const key = "toast:" + toast.t;
       seen.add(key);
       const m = this._mesh(key, toast, drawMemoryToast);
-      m.headLocked = this._offsetFor(m, 0, -0.1, -0.8);
+      if (L && L.has) {
+        m.headLocked = null;
+        m.target = xrAt(L, 0, L.halfH + XR.toastAbove + m.mesh.geometry.parameters.height / 2, m.target || new THREE.Vector3());
+      } else {
+        m.target = null;
+        m.headLocked = this._offsetFor(m, ...XR.toast);
+      }
       m.alpha = toast.age > 0.85 ? Math.max(0, (1 - toast.age) / 0.15) : 1;
     }
-    seen.add("status");
-    const status = this._mesh(
-      "status",
-      `glass: native passthrough · ${this.statusLine()}`,
-      drawStatus,
-    );
-    status.headLocked = this._offsetFor(status, 0, -0.25, -0.7);
-    status.alpha = 0.7;
     const now = performance.now();
+    // status strip: under the GitHub panel's bottom edge when you look at the person (layout.js), refreshed at 2 Hz
+    if (due(this, 2, now, '_statusT')) this._statusLine = `glass: native passthrough · ${this.statusLine()}`;
+    seen.add("status");
+    const status = this._mesh("status", this._statusLine, drawStatus);
+    status.headLocked = this._offsetFor(status, ...XR.status);
+    status.alpha = 0.7;
+    // OFFLINE chip (world service unreachable), just above the status strip. Subtle, not an alarm.
     const offline = offlineText(hud.net, now);
     if (offline) {
       seen.add('offline');
       const chip = this._mesh('offline', offline, drawOffline);
-      chip.headLocked = this._offsetFor(chip, 0, -0.21, -0.7);
+      chip.headLocked = this._offsetFor(chip, XR.status[0], XR.status[1] + 0.035, XR.status[2]);
       chip.alpha = 0.85;
     }
     if (this.config.perf) {
       if (due(this, 2, now, '_perfT')) this._perfLine = perfLine();
       seen.add('perf');
       const chip = this._mesh('perf', this._perfLine || '', drawPerf);
-      chip.headLocked = this._offsetFor(chip, -0.2, 0.26, -1.2);
+      chip.headLocked = this._offsetFor(chip, ...XR.perf);
+      chip.alpha = 0.8;
     }
 
     for (const [key, m] of this.meshes) {
@@ -422,13 +492,21 @@ export class XrHud {
         m.mesh.updateMatrixWorld();
       this.dev.pv?.mesh.updateMatrixWorld();
     }
-    safe('xr memory', () => this.mem?.frame(head, headQ, this.dev));
+    if (this.input) safe('xr input apply', () => this.input.apply(head)); // user-placed panels, before Memorable reads ss
+    if (show('memorable')) safe('xr memory', () => this.mem?.frame(head, headQ, this.dev)); else this.mem?._drop();
     safe('xr vision', () => this.vfx?.frame(this, head, headQ));
-    safe('xr swarm', () => this.swarm?.frame(head, headQ));
+    if (show('swarm3d')) safe('xr swarm', () => this.swarm?.frame(head, headQ));
     const brainAnchor = this.meshes.get('detail:person') || this.meshes.get('label:' + selected) || [...this.meshes.values()].find(m => m.key.startsWith('label:'));
     const brainCards = brainAnchor ? new Map([['card:anchor', { ...brainAnchor, target: brainAnchor.mesh.position }]]) : new Map();
-    safe('xr brain', () => this.brain?.frame(head, headQ, brainCards, this.dev));
+    if (show('brain')) safe('xr brain', () => this.brain?.frame(head, headQ, brainCards, this.dev));
+    safe('xr captions', () => this.captions?.frame(head, headQ));
     safe('xr pointer', () => this._hover(frame, t));
+    if (this.input) safe('xr input', () => {
+      this.input.frame(frame, head);
+      // XrPointers draws the beams (one solid beam per hand / controller); xrinput keeps the hover outline,
+      // pinch-hold move and resize. Two lasers per hand would read as a bug.
+      for (const src of this.input.srcs.values()) src.laser.visible = src.reticle.visible = false;
+    });
     // Let Quest composite the real room through transparent pixels. A second
     // camera image cannot share the compositor's depth correction and pose.
     this.fluidGlass?.render(null, this.camera);

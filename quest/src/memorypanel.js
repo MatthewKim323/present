@@ -12,6 +12,8 @@
 //
 // Hooks (one line each): hud.js applyMemory(hud, msg); desktop.js DesktopMemory; xr.js XrMemory; mock.js MEMORY_SCRIPT.
 import * as THREE from 'three';
+import { ANIM_HZ } from './perf.js';
+import { XR, xrAt, xrCardRight } from './layout.js';
 
 const FONT = 'ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif';
 const MONO = 'ui-monospace, Menlo, monospace';
@@ -568,20 +570,21 @@ export class DesktopMemory {
     const mem = this.hud.mem;
     if (!mem) { this.rect = null; return; }
     let c;
-    if (this.cache && this.cache.v === mem.v && !this.cache.c.animating && t - this.cache.t < 1000) c = this.cache.c;
+    // redraw on change, else at <= ANIM_HZ while animating (perf.js), else once a second
+    const ch = this.cache;
+    if (ch && ch.v === mem.v && (ch.c.animating ? t - ch.t < 1000 / ANIM_HZ : t - ch.t < 1000)) c = ch.c;
     else { c = drawMemoryStack(this.hud, t); this.cache = c ? { v: mem.v, c, t } : null; }
     if (!c) { this.rect = null; return; }
     const w = c.width / S, h = c.height / S;
     const ss = this.dev?.ssRect;
-    let x, y, k = 1;
+    const z = this.hud.ld, kz = z ? z.k : 1;
+    let x, y, k = kz;
     if (ss) {
-      // under the QM SWARM panel; shrink a little to fit, else move to the free gutter left of the cockpit
+      // far right rail, under the QM SWARM panel; shrinks (to 0.6 of the rail scale) before it leaves the screen
       x = ss.x; y = ss.y + ss.h + 10;
-      k = Math.min(1, (innerHeight - 8 - y) / h);
-      const gk = Math.min(1, (ss.x - 16) / W, (innerHeight - 104) / h);
-      if (k < 0.78 && gk > k) { k = gk; x = 8; y = innerHeight - 8 - h * k; }
-      k = Math.max(k, 0.6);
-    } else { x = innerWidth - W - 24; y = innerHeight - h - 24; } // no swarm panel: bottom right (top right holds free agent_activity)
+      k = Math.max(kz * 0.6, Math.min(kz, (innerHeight - 8 - y) / h));
+    } else if (z) { x = z.right.x; y = z.right.y; } // no swarm panel: top of the right rail
+    else { x = innerWidth - W - 24; y = innerHeight - h - 24; }
     x = Math.max(8, Math.min(innerWidth - W * k - 8, x));
     y = Math.max(8, Math.min(innerHeight - h * k - 8, y));
     ctx.drawImage(c, x, y, w * k, h * k);
@@ -592,7 +595,6 @@ export class DesktopMemory {
 // ---------------------------------------------------------------- XR
 
 const M_PER_PX = 0.00105; // same scale as the dev cockpit panels
-const FOLLOW_DEG = 40;
 
 export class XrMemory {
   constructor(scene, hud) {
@@ -618,7 +620,7 @@ export class XrMemory {
     let m = this.m;
     const stale = !m || m.v !== mem?.v || m.animating || t - m.drawn > 1000;
     if (!mem) { this._drop(); return; }
-    if (stale && (!m || t - m.drawn > 30)) {
+    if (stale && (!m || t - m.drawn > 1000 / ANIM_HZ)) { // <= ANIM_HZ texture uploads while animating (perf.js)
       const c = drawMemoryStack(this.hud, t);
       if (!c) { this._drop(); return; }
       const w = (c.width / S) * M_PER_PX, h = (c.height / S) * M_PER_PX;
@@ -642,25 +644,23 @@ export class XrMemory {
     }
     if (!m) return;
 
-    // top-left corner target: under the QM SWARM panel, else body-locked ahead-right
+    // top-left corner target: under the QM SWARM panel (far right rail, layout.js), else the top of that rail
     const ss = dev?.meshes?.ss;
+    const L = this.hud.lx;
+    const sc = XR.panel;
+    m.mesh.scale.setScalar(sc);
     let top;
     if (ss) {
+      const ssc = ss.mesh.scale.x || 1;
       top = ss.mesh.position.clone();
-      top.y -= ss.h / 2 + 0.014;
+      top.y -= (ss.h * ssc) / 2 + XR.gap * 0.5;
       const r = new THREE.Vector3(1, 0, 0).applyQuaternion(ss.mesh.quaternion);
-      top.addScaledVector(r, -ss.w / 2); // left edges aligned
+      top.addScaledVector(r, -(ss.w * ssc) / 2); // left edges aligned
+    } else if (L) {
+      const card = [...(dev?.cardMeshes || [])].find(([k]) => k.startsWith('card:'))?.[1];
+      top = xrAt(L, xrCardRight(L, card?.mesh) + XR.colGap, XR.rightTop);
     } else {
-      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQ);
-      const yaw = Math.atan2(fwd.x, -fwd.z);
-      const off = this.anchorYaw == null ? Infinity : Math.abs(Math.atan2(Math.sin(yaw - this.anchorYaw), Math.cos(yaw - this.anchorYaw)));
-      if (off > THREE.MathUtils.degToRad(FOLLOW_DEG) || !this.anchorPos) {
-        this.anchorYaw = yaw;
-        this.anchorPos = head.clone().add(new THREE.Vector3(Math.sin(yaw), 0, -Math.cos(yaw)).multiplyScalar(1.5));
-        this.anchorPos.y = head.y + 0.05;
-        this.anchorPos.add(new THREE.Vector3(Math.cos(yaw), 0, Math.sin(yaw)).multiplyScalar(0.12));
-      }
-      top = this.anchorPos.clone();
+      top = new THREE.Vector3(0.45, 0.1, -1.5).applyQuaternion(headQ).add(head);
     }
     const q = new THREE.Quaternion();
     const probe = new THREE.Object3D();
@@ -668,8 +668,8 @@ export class XrMemory {
     probe.lookAt(head);
     q.copy(probe.quaternion);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
-    const target = top.clone().addScaledVector(right, m.w / 2);
-    target.y -= m.h / 2;
+    const target = top.clone().addScaledVector(right, (m.w * sc) / 2);
+    target.y -= (m.h * sc) / 2;
     if (!m.placed) { m.mesh.position.copy(target); m.placed = true; } else m.mesh.position.lerp(target, 0.14);
     m.mesh.lookAt(head);
   }

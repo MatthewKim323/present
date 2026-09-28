@@ -197,11 +197,13 @@ def _actor(v: str | None) -> str:
 
 
 def check_bearer(authorization: str | None) -> None:
-    secret = os.environ.get("WORLD_HOOKS_SECRET", "")
-    if len(secret) < 16:
-        raise HTTPException(503, "WORLD_HOOKS_SECRET not configured")
+    """These endpoints are read-only, so they also take GBRAIN_PROXY_TOKEN: the token QM hands its sandboxes,
+    which (unlike WORLD_HOOKS_SECRET) can't post world events."""
+    secrets = [s for s in (os.environ.get("GBRAIN_PROXY_TOKEN", ""), os.environ.get("WORLD_HOOKS_SECRET", "")) if len(s) >= 16]
+    if not secrets:
+        raise HTTPException(503, "GBRAIN_PROXY_TOKEN / WORLD_HOOKS_SECRET not configured")
     got = (authorization or "").removeprefix("Bearer ").removeprefix("bearer ").strip()
-    if not got or not hmac.compare_digest(got.encode(), secret.encode()):
+    if not got or not any(hmac.compare_digest(got.encode(), s.encode()) for s in secrets):
         raise HTTPException(401, "bad bearer")
 
 
